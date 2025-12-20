@@ -1,0 +1,6 @@
+data/
+*.db
+*.db.nsec
+*.nsec
+__pycache__/
+.venv/

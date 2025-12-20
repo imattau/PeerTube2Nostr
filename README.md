@@ -20,6 +20,7 @@ PeerTube2Nostr ingests videos from PeerTube channels using the PeerTube API as t
   * de-duplication using canonicalised URLs and stable entry keys
 * **Relay management**: add/remove/enable/disable relays in the DB
 * **Retry**: failed publishes are re-queued after a configurable delay
+* **Secure nsec storage**: store the signing key in your OS keyring (optional)
 
 ## How it works
 
@@ -37,7 +38,32 @@ PeerTube2Nostr ingests videos from PeerTube channels using the PeerTube API as t
 Python 3.10+ recommended.
 
 ```bash
-pip install requests feedparser pynostr
+pip install requests feedparser pynostr keyring
+```
+
+## Docker (optional)
+
+This repo includes a `Dockerfile` and `docker-compose.yml` to avoid host dependency conflicts.
+
+```bash
+mkdir -p data
+docker compose build
+```
+
+Run commands with Docker:
+
+```bash
+# init DB
+docker compose run --rm peertube2nostr init --db /data/peertube2nostr.db
+
+# store nsec (uses file storage in /data if keyring isn't available)
+docker compose run --rm peertube2nostr set-nsec --db /data/peertube2nostr.db
+
+# add a channel
+docker compose run --rm peertube2nostr add-channel "https://example.tube/c/mychannel" --db /data/peertube2nostr.db
+
+# run loop
+docker compose up
 ```
 
 ## Quick start
@@ -76,7 +102,15 @@ python peertube_nostr.py set-rss 1 "https://example.tube/feeds/videos.xml?channe
 
 ### 5) Run
 
-Set your Nostr signing key (nsec):
+Store your Nostr signing key (nsec) (optional):
+
+```bash
+python peertube_nostr.py set-nsec --db peertube2nostr.db
+```
+
+This will use the OS keyring when available. If keyring is not available, it falls back to a local file named like `peertube2nostr.db.nsec` (chmod 600). You can override the file location with `NSEC_FILE`.
+
+Or set it per run:
 
 ```bash
 export NOSTR_NSEC="nsec1..."
@@ -87,7 +121,8 @@ python peertube_nostr.py run --db peertube2nostr.db
 
 Environment variables (optional):
 
-* `NOSTR_NSEC` (required unless using `--nsec`)
+* `NOSTR_NSEC` (required unless using `--nsec` or `set-nsec`)
+* `NSEC_FILE` (optional, path for file-based nsec storage)
 * `NOSTR_RELAYS` (comma-separated, overrides relays in DB)
 * `POLL_SECONDS` (default `300`)
 * `PUBLISH_INTERVAL_SECONDS` (default `1`)
@@ -120,6 +155,11 @@ python peertube_nostr.py run --db peertube2nostr.db
 * `remove-relay <id|url>`
 * `enable-relay <id|url>` / `disable-relay <id|url>`
 * `list-relays`
+
+### Nsec storage
+
+* `set-nsec`: stores in keyring if available, otherwise in `NSEC_FILE` or `<db>.nsec`
+* `clear-nsec`: remove the stored nsec (keyring + file)
 
 ### Run loop
 
@@ -156,5 +196,3 @@ Tags include:
 * Better media metadata tags (duration, size, resolution where available)
 * Optional Nostr long-form (`kind:30023`) for richer formatting
 * Rate limiting per relay + exponential backoff
-
-

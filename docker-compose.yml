@@ -1,0 +1,8 @@
+services:
+  peertube2nostr:
+    build: .
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    volumes:
+      - ./data:/data
+    command: ["run", "--db", "/data/peertube2nostr.db"]

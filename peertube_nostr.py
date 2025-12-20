@@ -30,9 +30,11 @@ Examples
 """
 
 import argparse
+import getpass
 import os
 import re
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict, Any
@@ -43,9 +45,82 @@ import requests
 from pynostr.event import Event
 from pynostr.key import PrivateKey
 from pynostr.relay_manager import RelayManager
+try:
+    import keyring
+    import keyring.errors
+except Exception:  # pragma: no cover - optional dependency
+    keyring = None
 
 
 DEFAULT_RELAYS = ["wss://relay.damus.io", "wss://nos.lol"]
+KEYRING_SERVICE = "peertube_nostr"
+
+
+def _keyring_available() -> bool:
+    return keyring is not None
+
+
+def _keyring_user(db_path: str) -> str:
+    return os.path.abspath(db_path)
+
+
+def _nsec_file_path(db_path: str) -> str:
+    return os.environ.get("NSEC_FILE") or (os.path.abspath(db_path) + ".nsec")
+
+
+def _read_secret_file(path: str) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def _write_secret_file(path: str, value: str) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(value.strip() + "\n")
+
+
+def get_stored_nsec(db_path: str) -> Optional[str]:
+    if _keyring_available():
+        try:
+            nsec = keyring.get_password(KEYRING_SERVICE, _keyring_user(db_path))
+            if nsec:
+                return nsec
+        except keyring.errors.KeyringError:
+            pass
+    return _read_secret_file(_nsec_file_path(db_path))
+
+
+def set_stored_nsec(db_path: str, nsec: str) -> Tuple[str, Optional[str]]:
+    if _keyring_available():
+        try:
+            keyring.set_password(KEYRING_SERVICE, _keyring_user(db_path), nsec)
+            return "keyring", None
+        except keyring.errors.KeyringError:
+            pass
+    path = _nsec_file_path(db_path)
+    _write_secret_file(path, nsec)
+    return "file", path
+
+
+def clear_stored_nsec(db_path: str) -> bool:
+    removed = False
+    if _keyring_available():
+        try:
+            keyring.delete_password(KEYRING_SERVICE, _keyring_user(db_path))
+            removed = True
+        except keyring.errors.PasswordDeleteError:
+            pass
+    path = _nsec_file_path(db_path)
+    try:
+        os.remove(path)
+        removed = True
+    except FileNotFoundError:
+        pass
+    return removed
 
 
 @dataclass
@@ -1004,6 +1079,20 @@ class Runner:
 
 
 def parse_cli() -> argparse.Namespace:
+    argv = sys.argv[1:]
+    if "--db" in argv:
+        idx = argv.index("--db")
+        if idx < len(argv) - 1:
+            db_args = argv[idx:idx + 2]
+            del argv[idx:idx + 2]
+            argv = db_args + argv
+    else:
+        for i, arg in enumerate(list(argv)):
+            if arg.startswith("--db="):
+                db_arg = argv.pop(i)
+                argv = [db_arg] + argv
+                break
+
     p = argparse.ArgumentParser(description="PeerTube channel videos -> Nostr (API primary, RSS fallback)")
     p.add_argument("--db", default=os.environ.get("DB_PATH", "peertube_to_nostr.db"))
 
@@ -1061,7 +1150,13 @@ def parse_cli() -> argparse.Namespace:
     s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
     s.set_defaults(cmd="run")
 
-    return p.parse_args()
+    s = sub.add_parser("set-nsec", help="Store nsec securely in OS keyring for this DB path")
+    s.add_argument("--nsec", default=None, help="nsec signing key (prompted if omitted)")
+    s.set_defaults(cmd="set-nsec")
+
+    sub.add_parser("clear-nsec", help="Remove stored nsec from OS keyring for this DB path").set_defaults(cmd="clear-nsec")
+
+    return p.parse_args(argv)
 
 
 def main() -> None:
@@ -1159,9 +1254,9 @@ def main() -> None:
         if args.cmd == "run":
             store.seed_default_relays_if_empty()
 
-            nsec = os.environ.get("NOSTR_NSEC") or args.nsec
+            nsec = os.environ.get("NOSTR_NSEC") or args.nsec or get_stored_nsec(args.db)
             if not nsec:
-                raise SystemExit("Provide nsec via --nsec or NOSTR_NSEC env var.")
+                raise SystemExit("Provide nsec via --nsec or NOSTR_NSEC, or run set-nsec to store it.")
 
             relays_env = os.environ.get("NOSTR_RELAYS")
             relays_cli = args.relays
@@ -1186,6 +1281,24 @@ def main() -> None:
                 retry_failed_after_seconds=retry,
                 api_limit_per_source=args.api_limit_per_source,
             )
+            return
+
+        if args.cmd == "set-nsec":
+            nsec = args.nsec
+            if not nsec:
+                nsec = getpass.getpass("Enter nsec: ").strip()
+            if not nsec:
+                raise SystemExit("nsec cannot be empty.")
+            store_type, path = set_stored_nsec(args.db, nsec)
+            if store_type == "keyring":
+                print("Stored nsec in OS keyring for this DB path.")
+            else:
+                print(f"Stored nsec in file: {path}")
+            return
+
+        if args.cmd == "clear-nsec":
+            removed = clear_stored_nsec(args.db)
+            print("Removed stored nsec." if removed else "No stored nsec found.")
             return
 
     finally:
