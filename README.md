@@ -1,2 +1,160 @@
 # PeerTube2Nostr
-PeerTube2Nostr publishes videos from PeerTube channels to Nostr. It pulls videos via the PeerTube API first, falls back to RSS if needed, and posts Nostr notes that credit the original creator and include MP4-first playback links with HLS fallback.
+
+Publish PeerTube channel videos to Nostr with proper attribution.
+
+PeerTube2Nostr ingests videos from PeerTube channels using the PeerTube API as the primary source, with RSS/Atom as a fallback. It then publishes a Nostr note per video, embedding a direct MP4 link when available (best for most Nostr clients), with HLS (`.m3u8`) as a fallback, and always including the canonical watch URL.
+
+## Features
+
+* **API-first ingest**: pulls channel videos via PeerTube API (`/api/v1/video-channels/<channel>/videos`)
+* **RSS fallback**: optional feed URL used if API fails or is not configured
+* **Attribution preserved**: post includes creator/channel name and links where available
+* **Client-friendly playback links**:
+
+  * MP4 first (most compatible for Nostr clients)
+  * HLS fallback
+  * watch URL always included
+* **SQLite state**:
+
+  * tracks sources, relays, videos, posting status
+  * de-duplication using canonicalised URLs and stable entry keys
+* **Relay management**: add/remove/enable/disable relays in the DB
+* **Retry**: failed publishes are re-queued after a configurable delay
+
+## How it works
+
+1. Add a **channel source** (API primary) using a PeerTube channel URL.
+2. Optionally set an **RSS feed fallback** for that source.
+3. Add one or more **Nostr relays**.
+4. Run the loop:
+
+   * polls sources
+   * inserts new videos into the DB
+   * publishes one pending video per cycle
+
+## Installation
+
+Python 3.10+ recommended.
+
+```bash
+pip install requests feedparser pynostr
+```
+
+## Quick start
+
+### 1) Initialise the database
+
+```bash
+python peertube_nostr.py init --db peertube2nostr.db
+```
+
+### 2) Add relays
+
+```bash
+python peertube_nostr.py add-relay wss://relay.damus.io --db peertube2nostr.db
+python peertube_nostr.py add-relay wss://nos.lol --db peertube2nostr.db
+```
+
+### 3) Add a channel (API primary)
+
+Use a channel URL, for example:
+
+* `https://example.tube/c/mychannel`
+* `https://example.tube/video-channels/mychannel`
+
+```bash
+python peertube_nostr.py add-channel "https://example.tube/c/mychannel" --db peertube2nostr.db
+```
+
+### 4) Optional: set RSS fallback
+
+If the instance/channel provides a feed:
+
+```bash
+python peertube_nostr.py set-rss 1 "https://example.tube/feeds/videos.xml?channelId=..." --db peertube2nostr.db
+```
+
+### 5) Run
+
+Set your Nostr signing key (nsec):
+
+```bash
+export NOSTR_NSEC="nsec1..."
+python peertube_nostr.py run --db peertube2nostr.db
+```
+
+## Configuration
+
+Environment variables (optional):
+
+* `NOSTR_NSEC` (required unless using `--nsec`)
+* `NOSTR_RELAYS` (comma-separated, overrides relays in DB)
+* `POLL_SECONDS` (default `300`)
+* `PUBLISH_INTERVAL_SECONDS` (default `1`)
+* `RETRY_FAILED_AFTER_SECONDS` (default `3600`)
+* `API_LIMIT_PER_SOURCE` (default `50`)
+
+Example:
+
+```bash
+export NOSTR_NSEC="nsec1..."
+export NOSTR_RELAYS="wss://nos.lol,wss://relay.damus.io"
+export POLL_SECONDS=180
+export API_LIMIT_PER_SOURCE=30
+python peertube_nostr.py run --db peertube2nostr.db
+```
+
+## Commands
+
+### Sources
+
+* `add-channel <channel_url>`: add an API-based source (primary ingest)
+* `add-rss <rss_url>`: add RSS-only source (fallback ingest only)
+* `set-rss <source_id> <rss_url>`: set RSS fallback for a source
+* `enable-source <id>` / `disable-source <id>`
+* `list-sources`
+
+### Relays
+
+* `add-relay <relay_url>`
+* `remove-relay <id|url>`
+* `enable-relay <id|url>` / `disable-relay <id|url>`
+* `list-relays`
+
+### Run loop
+
+* `run` (poll + publish)
+
+## Post format (what gets published)
+
+Each video becomes a Nostr note containing:
+
+* Title
+* Author/channel credit
+* Direct MP4 URL (if available)
+* HLS URL (if available and different)
+* Canonical watch URL
+* Description/summary (if available)
+
+Tags include:
+
+* `t=video`, `t=peertube`
+* `url` + `m` for the best available media link (MP4 preferred, else HLS)
+* `r` tags referencing the watch URL and channel URL
+* additional `peertube:*` tags when available
+
+## Limitations and notes
+
+* PeerTube instances may vary slightly in API behaviour and returned fields. The script uses best-effort parsing.
+* Not all videos expose a direct MP4 file URL, depending on instance settings. In those cases the post will include HLS and the watch URL.
+* This is a polling loop, not a webhook based system.
+
+## Roadmap (practical next steps)
+
+* Pagination for channel API listing (beyond first `API_LIMIT_PER_SOURCE`)
+* Per-source relay sets (post different channels to different relays)
+* Better media metadata tags (duration, size, resolution where available)
+* Optional Nostr long-form (`kind:30023`) for richer formatting
+* Rate limiting per relay + exponential backoff
+
+
