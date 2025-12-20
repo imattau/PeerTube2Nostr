@@ -38,7 +38,7 @@ PeerTube2Nostr ingests videos from PeerTube channels using the PeerTube API as t
 Python 3.10+ recommended.
 
 ```bash
-pip install requests feedparser pynostr keyring
+pip install requests feedparser pynostr keyring prompt_toolkit textual
 ```
 
 ## Docker (optional)
@@ -50,20 +50,27 @@ mkdir -p data
 docker compose build
 ```
 
+The compose file sets `DB_PATH=/data/peertube2nostr.db` so you don't need to pass `--db` for Docker commands.
+
 Run commands with Docker:
 
 ```bash
-# init DB
-docker compose run --rm peertube2nostr init --db /data/peertube2nostr.db
+# first run: interactive setup (seed relays, set nsec, add channel)
+docker compose run --rm peertube2nostr interactive
 
-# store nsec (uses file storage in /data if keyring isn't available)
-docker compose run --rm peertube2nostr set-nsec --db /data/peertube2nostr.db
-
-# add a channel
-docker compose run --rm peertube2nostr add-channel "https://example.tube/c/mychannel" --db /data/peertube2nostr.db
+# or do it step-by-step:
+docker compose run --rm peertube2nostr init
+docker compose run --rm peertube2nostr set-nsec
+docker compose run --rm peertube2nostr add-channel "https://example.tube/c/mychannel"
 
 # run loop
 docker compose up
+```
+
+Interactive CLI in Docker:
+
+```bash
+docker compose run --rm peertube2nostr interactive
 ```
 
 ## Quick start
@@ -164,6 +171,17 @@ python peertube_nostr.py run --db peertube2nostr.db
 ### Run loop
 
 * `run` (poll + publish)
+* `interactive` (poll + publish + interactive CLI)
+
+Example:
+
+```bash
+python peertube_nostr.py interactive --db peertube2nostr.db
+```
+
+Tip: type `/` in interactive mode to show available commands.
+With `textual` installed, `interactive` runs a full-screen TUI with a log view, status bar, and command input.
+If `textual` isn't available, it falls back to the line-based prompt (with `prompt_toolkit` features if installed).
 
 ## Post format (what gets published)
 

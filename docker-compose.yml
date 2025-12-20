@@ -5,4 +5,7 @@ services:
     working_dir: /app
     volumes:
       - ./data:/data
-    command: ["run", "--db", "/data/peertube2nostr.db"]
+    environment:
+      DB_PATH: /data/peertube2nostr.db
+      NSEC_FILE: /data/peertube2nostr.db.nsec
+    command: ["run"]

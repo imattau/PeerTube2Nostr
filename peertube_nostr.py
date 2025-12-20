@@ -35,7 +35,10 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
+import shlex
+from queue import Queue, Empty
 from dataclasses import dataclass
 from typing import Optional, Tuple, List, Dict, Any
 from urllib.parse import urlparse, urlunparse
@@ -50,6 +53,20 @@ try:
     import keyring.errors
 except Exception:  # pragma: no cover - optional dependency
     keyring = None
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.styles import Style
+except Exception:  # pragma: no cover - optional dependency
+    PromptSession = None
+try:
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical
+    from textual.widgets import Header, Footer, Input, Static, RichLog
+except Exception:  # pragma: no cover - optional dependency
+    App = None
 
 
 DEFAULT_RELAYS = ["wss://relay.damus.io", "wss://nos.lol"]
@@ -583,6 +600,18 @@ class Store:
         self.conn.commit()
 
     # Videos
+    def count_pending(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) FROM videos WHERE status='pending'").fetchone()
+        return int(row[0]) if row else 0
+
+    def count_sources(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) FROM sources").fetchone()
+        return int(row[0]) if row else 0
+
+    def count_relays(self) -> int:
+        row = self.conn.execute("SELECT COUNT(*) FROM relays").fetchone()
+        return int(row[0]) if row else 0
+
     def video_exists(self, source_id: int, entry_key: str) -> bool:
         row = self.conn.execute(
             "SELECT 1 FROM videos WHERE source_id=? AND entry_key=? LIMIT 1",
@@ -896,11 +925,25 @@ class NostrPublisher:
 
 
 class Runner:
-    def __init__(self, store: Store, pt: PeerTubeClient, pub: NostrPublisher, n: UrlNormaliser) -> None:
+    def __init__(
+        self,
+        store: Store,
+        pt: PeerTubeClient,
+        pub: NostrPublisher,
+        n: UrlNormaliser,
+        log_fn: Optional[callable] = None,
+    ) -> None:
         self.store = store
         self.pt = pt
         self.pub = pub
         self.n = n
+        self.log_fn = log_fn
+
+    def _log(self, msg: str) -> None:
+        if self.log_fn:
+            self.log_fn(msg)
+        else:
+            print(msg)
 
     def ingest_sources_once(self, api_limit_per_source: int) -> None:
         sources = self.store.get_enabled_sources()
@@ -965,7 +1008,7 @@ class Runner:
 
                     self.store.mark_source_polled(sid, None)
                     if inserted:
-                        print(f"[source {sid}] API new items: {inserted}")
+                        self._log(f"[source {sid}] API new items: {inserted}")
                     continue  # API succeeded, no need RSS fallback
 
                 # if API configured but failed, capture error and fall through to RSS
@@ -1012,10 +1055,10 @@ class Runner:
 
                     self.store.mark_source_polled(sid, None if not err else err)
                     if inserted:
-                        print(f"[source {sid}] RSS new items: {inserted}")
+                        self._log(f"[source {sid}] RSS new items: {inserted}")
                 except Exception as ex:
                     self.store.mark_source_polled(sid, f"{err + '; ' if err else ''}RSS failed: {ex}")
-                    print(f"[source {sid}] RSS error: {ex}")
+                    self._log(f"[source {sid}] RSS error: {ex}")
             else:
                 self.store.mark_source_polled(sid, err or "No RSS fallback configured and API listing failed/unconfigured")
 
@@ -1040,41 +1083,75 @@ class Runner:
             self.store.mark_posted(pending["id"], eid)
             for r in relays:
                 self.store.mark_relay_used(r, None)
-            print(f"Published {eid} | {pending.get('title') or pending.get('watch_url')}")
+            self._log(f"Published {eid} | {pending.get('title') or pending.get('watch_url')}")
         except Exception as ex:
             self.store.mark_failed(pending["id"], str(ex))
             for r in relays:
                 self.store.mark_relay_used(r, str(ex))
-            print(f"Publish failed: {ex}")
+            self._log(f"Publish failed: {ex}")
 
-    def run(self, nsec: str, relays: list[str], poll_seconds: int, publish_interval_seconds: int, retry_failed_after_seconds: Optional[int], api_limit_per_source: int) -> None:
-        print(f"Relays: {', '.join(relays)}")
-        print(f"Poll: {poll_seconds}s | Publish spacing: {publish_interval_seconds}s | API limit/source: {api_limit_per_source}")
+    def run(
+        self,
+        nsec: Optional[str],
+        relays: Optional[list[str]],
+        poll_seconds: int,
+        publish_interval_seconds: int,
+        retry_failed_after_seconds: Optional[int],
+        api_limit_per_source: int,
+        stop_event: Optional[threading.Event] = None,
+    ) -> None:
+        dynamic_nsec = nsec is None
+        dynamic_relays = relays is None
+        last_relays: Optional[list[str]] = None
+        last_nsec_set: Optional[bool] = None
+
+        self._log(f"Poll: {poll_seconds}s | Publish spacing: {publish_interval_seconds}s | API limit/source: {api_limit_per_source}")
 
         last_retry_check = 0
 
         while True:
             try:
+                if stop_event and stop_event.is_set():
+                    self._log("Stopped.")
+                    return
+
+                if dynamic_relays:
+                    relays = self.store.get_enabled_relays() or DEFAULT_RELAYS
+                if relays != last_relays:
+                    self._log(f"Relays: {', '.join(relays or [])}")
+                    last_relays = list(relays or [])
+
+                if dynamic_nsec:
+                    nsec = get_stored_nsec(self.store.db_path)
+                nsec_set = bool(nsec)
+                if last_nsec_set is None or nsec_set != last_nsec_set:
+                    if nsec_set:
+                        self._log("Nsec available for publishing.")
+                    else:
+                        self._log("No nsec set; publishing paused.")
+                    last_nsec_set = nsec_set
+
                 now = self.n.now_ts()
                 if retry_failed_after_seconds is not None:
                     if last_retry_check == 0 or (now - last_retry_check) >= 60:
                         n = self.store.retry_failed(retry_failed_after_seconds)
                         if n:
-                            print(f"Re-queued failed items for retry: {n}")
+                            self._log(f"Re-queued failed items for retry: {n}")
                         last_retry_check = now
 
                 self.ingest_sources_once(api_limit_per_source=api_limit_per_source)
 
                 # publish at most one per loop iteration
-                self.publish_one_pending(nsec=nsec, relays=relays)
+                if nsec:
+                    self.publish_one_pending(nsec=nsec, relays=relays or [])
 
                 time.sleep(publish_interval_seconds)
                 time.sleep(poll_seconds)
             except KeyboardInterrupt:
-                print("\nStopped.")
+                self._log("\nStopped.")
                 return
             except Exception as ex:
-                print(f"Loop error: {ex}")
+                self._log(f"Loop error: {ex}")
                 time.sleep(poll_seconds)
 
 
@@ -1149,6 +1226,15 @@ def parse_cli() -> argparse.Namespace:
     s.add_argument("--retry-failed-after-seconds", type=int, default=int(os.environ.get("RETRY_FAILED_AFTER_SECONDS", "3600")))
     s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
     s.set_defaults(cmd="run")
+
+    s = sub.add_parser("interactive", help="Run with an interactive CLI to manage sources/relays/nsec")
+    s.add_argument("--nsec", default=None, help="nsec signing key (or set NOSTR_NSEC)")
+    s.add_argument("--relays", default=None, help="Comma-separated relay URLs (overrides DB if provided)")
+    s.add_argument("--poll-seconds", type=int, default=int(os.environ.get("POLL_SECONDS", "300")))
+    s.add_argument("--publish-interval-seconds", type=int, default=int(os.environ.get("PUBLISH_INTERVAL_SECONDS", "1")))
+    s.add_argument("--retry-failed-after-seconds", type=int, default=int(os.environ.get("RETRY_FAILED_AFTER_SECONDS", "3600")))
+    s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
+    s.set_defaults(cmd="interactive")
 
     s = sub.add_parser("set-nsec", help="Store nsec securely in OS keyring for this DB path")
     s.add_argument("--nsec", default=None, help="nsec signing key (prompted if omitted)")
@@ -1251,11 +1337,12 @@ def main() -> None:
                 print(f"{rid}\t{enabled}\t{url}\t{url_norm}\t{lu}\t{le}")
             return
 
-        if args.cmd == "run":
+        if args.cmd in ("run", "interactive"):
             store.seed_default_relays_if_empty()
 
-            nsec = os.environ.get("NOSTR_NSEC") or args.nsec or get_stored_nsec(args.db)
-            if not nsec:
+            nsec_env = os.environ.get("NOSTR_NSEC") or args.nsec
+            nsec = nsec_env or get_stored_nsec(args.db)
+            if args.cmd == "run" and not nsec:
                 raise SystemExit("Provide nsec via --nsec or NOSTR_NSEC, or run set-nsec to store it.")
 
             relays_env = os.environ.get("NOSTR_RELAYS")
@@ -1266,21 +1353,30 @@ def main() -> None:
             elif relays_cli and relays_cli.strip():
                 relays = [n.normalise_relay_url(x.strip()) for x in relays_cli.split(",") if x.strip()]
             else:
-                relays = store.get_enabled_relays() or DEFAULT_RELAYS
+                relays = None
 
             retry = args.retry_failed_after_seconds
             if retry == 0:
                 retry = None
 
-            runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n)
-            runner.run(
-                nsec=nsec,
-                relays=relays,
-                poll_seconds=args.poll_seconds,
-                publish_interval_seconds=args.publish_interval_seconds,
-                retry_failed_after_seconds=retry,
-                api_limit_per_source=args.api_limit_per_source,
-            )
+            if args.cmd == "interactive":
+                _run_interactive(
+                    args=args,
+                    n=n,
+                    nsec_env=nsec_env,
+                    relays=relays,
+                    retry=retry,
+                )
+            else:
+                runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n)
+                runner.run(
+                    nsec=nsec_env,
+                    relays=relays,
+                    poll_seconds=args.poll_seconds,
+                    publish_interval_seconds=args.publish_interval_seconds,
+                    retry_failed_after_seconds=retry,
+                    api_limit_per_source=args.api_limit_per_source,
+                )
             return
 
         if args.cmd == "set-nsec":
@@ -1303,6 +1399,543 @@ def main() -> None:
 
     finally:
         store.close()
+
+
+def _interactive_shell(db_path: str, n: UrlNormaliser, stop_event: threading.Event) -> None:
+    store = Store(db_path, n)
+    store.init_schema()
+    _interactive_first_run(store, db_path, n)
+    commands = _interactive_commands()
+
+    def _relay_tokens() -> list[str]:
+        rows = store.list_relays()
+        out: list[str] = []
+        for (rid, _enabled, url, _url_norm, _last_used_ts, _last_error) in rows:
+            out.append(str(rid))
+            if url:
+                out.append(str(url))
+        return out
+
+    def _source_ids() -> list[str]:
+        rows = store.list_sources()
+        return [str(r[0]) for r in rows]
+
+    class _InteractiveCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            try:
+                parts = shlex.split(text)
+            except ValueError:
+                parts = text.split()
+            if text.endswith(" "):
+                parts.append("")
+            if len(parts) <= 1:
+                word = parts[0] if parts else ""
+                for c in commands:
+                    if c.startswith(word):
+                        yield Completion(c, start_position=-len(word))
+                return
+
+            cmd = parts[0]
+            current = parts[-1]
+
+            if cmd in ("enable-relay", "disable-relay", "remove-relay"):
+                if len(parts) <= 2:
+                    for val in _relay_tokens():
+                        if val.startswith(current):
+                            yield Completion(val, start_position=-len(current))
+                return
+
+            if cmd in ("enable-source", "disable-source", "set-rss"):
+                if len(parts) <= 2:
+                    for val in _source_ids():
+                        if val.startswith(current):
+                            yield Completion(val, start_position=-len(current))
+                return
+
+    def _history_path() -> str:
+        base = os.path.dirname(os.path.abspath(db_path)) or "."
+        return os.path.join(base, ".peertube2nostr_history")
+
+    def _log(msg: str) -> None:
+        print(msg)
+
+    print("== PeerTube2Nostr Interactive ==")
+    print("Type '/' for commands. 'quit' to exit.")
+    _emit_help(_log)
+
+    try:
+        session = None
+        if PromptSession is not None:
+            try:
+                style = Style.from_dict(
+                    {"prompt": "ansicyan bold", "toolbar": "ansiblack bg:ansiwhite"}
+                )
+                session = PromptSession(
+                    message=[("class:prompt", "> ")],
+                    history=FileHistory(_history_path()),
+                    auto_suggest=AutoSuggestFromHistory(),
+                    completer=_InteractiveCompleter(),
+                    style=style,
+                    bottom_toolbar=lambda: _status_toolbar(store, db_path),
+                )
+            except Exception:
+                session = None
+
+        while True:
+            try:
+                if session is not None:
+                    line = session.prompt().strip()
+                else:
+                    line = input("> ").strip()
+            except EOFError:
+                line = "quit"
+            if not line:
+                continue
+            parts = shlex.split(line)
+            cmd = parts[0].lower()
+            args = parts[1:]
+
+            should_quit = _dispatch_command(store, n, db_path, cmd, args, _log)
+            if should_quit:
+                stop_event.set()
+                return
+    finally:
+        store.close()
+
+
+def _interactive_first_run(store: Store, db_path: str, n: UrlNormaliser) -> None:
+    has_sources = store.count_sources() > 0
+    has_nsec = bool(get_stored_nsec(db_path))
+    if has_sources and has_nsec:
+        return
+
+    print("First run setup (press Enter to skip any step).")
+
+    if store.count_relays() == 0:
+        ans = input("Seed default relays? [Y/n]: ").strip().lower()
+        if ans in ("", "y", "yes"):
+            store.seed_default_relays_if_empty()
+            print("Seeded default relays.")
+
+    if not has_nsec:
+        ans = input("Set nsec now? [Y/n]: ").strip().lower()
+        if ans in ("", "y", "yes"):
+            nsec = getpass.getpass("Enter nsec: ").strip()
+            if nsec:
+                store_type, path = set_stored_nsec(db_path, nsec)
+                if store_type == "keyring":
+                    print("Stored nsec in OS keyring for this DB path.")
+                else:
+                    print(f"Stored nsec in file: {path}")
+
+    if not has_sources:
+        channel_url = input("Add PeerTube channel URL (blank to skip): ").strip()
+        if channel_url:
+            try:
+                sid = store.add_channel_source(channel_url)
+                print(f"Added channel source id={sid}")
+            except Exception as ex:
+                print(f"Failed to add channel: {ex}")
+
+            rss_url = input("Add RSS fallback URL (blank to skip): ").strip()
+            if rss_url:
+                try:
+                    rss_norm = n.normalise_feed_url(rss_url)
+                    if not n.looks_like_peertube_feed(rss_norm):
+                        print("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
+                    store.set_source_rss(sid, rss_url)
+                    print(f"Set RSS fallback for source {sid} (canonical: {rss_norm})")
+                except Exception as ex:
+                    print(f"Failed to set RSS: {ex}")
+
+
+def _interactive_commands() -> list[str]:
+    return [
+        "help", "status", "init",
+        "list-relays", "add-relay", "remove-relay", "enable-relay", "disable-relay",
+        "list-sources", "add-channel", "add-rss", "set-rss", "enable-source", "disable-source",
+        "set-nsec", "clear-nsec",
+        "quit", "exit",
+    ]
+
+
+def _emit_help(log_fn) -> None:
+    for line in _help_lines():
+        log_fn(line)
+
+
+def _help_lines() -> list[str]:
+    return [
+        "Commands:",
+        "  help | / | ?                     Show this help",
+        "  status                            Show counts + nsec status",
+        "  init                              Init DB + seed relays (if empty)",
+        "  list-relays                       List relays",
+        "  add-relay <url>                   Add relay",
+        "  remove-relay <id|url>             Remove relay",
+        "  enable-relay <id|url>             Enable relay",
+        "  disable-relay <id|url>            Disable relay",
+        "  list-sources                      List sources",
+        "  add-channel <url>                 Add PeerTube channel",
+        "  add-rss <url>                     Add RSS-only source",
+        "  set-rss <id> <url>                Set RSS fallback",
+        "  enable-source <id>                Enable source",
+        "  disable-source <id>               Disable source",
+        "  set-nsec [nsec]                   Store nsec (prompt if omitted)",
+        "  clear-nsec                        Remove stored nsec",
+        "  quit | exit                       Stop",
+    ]
+
+
+def _dispatch_command(store: Store, n: UrlNormaliser, db_path: str, cmd: str, args: list[str], log_fn) -> bool:
+    if cmd in ("/", "?", "help"):
+        _emit_help(log_fn)
+        return False
+    if cmd in ("quit", "exit"):
+        return True
+    if cmd == "status":
+        relays = store.get_enabled_relays()
+        pending = store.count_pending()
+        sources = store.count_sources()
+        has_nsec = bool(get_stored_nsec(db_path))
+        log_fn(f"Relays enabled: {len(relays)} | Sources: {sources} | Pending: {pending} | Nsec set: {has_nsec}")
+        return False
+    if cmd == "init":
+        store.init_schema()
+        store.seed_default_relays_if_empty()
+        log_fn(f"Initialised DB: {db_path}")
+        return False
+    if cmd == "list-relays":
+        rows = store.list_relays()
+        if not rows:
+            log_fn("No relays.")
+        else:
+            log_fn("id\tenabled\trelay_url\tcanonical\tlast_used\tlast_error")
+            for (rid, enabled, url, url_norm, last_used_ts, last_error) in rows:
+                lu = str(last_used_ts) if last_used_ts else "-"
+                le = (last_error or "").replace("\n", " ")
+                if len(le) > 80:
+                    le = le[:77] + "..."
+                log_fn(f"{rid}\t{enabled}\t{url}\t{url_norm}\t{lu}\t{le}")
+        return False
+    if cmd == "add-relay" and len(args) == 1:
+        rid = store.add_relay(args[0])
+        log_fn(f"Added relay id={rid}")
+        return False
+    if cmd == "remove-relay" and len(args) == 1:
+        c = store.remove_relay(args[0])
+        log_fn(f"Removed: {c}")
+        return False
+    if cmd == "enable-relay" and len(args) == 1:
+        c = store.set_relay_enabled(args[0], True)
+        log_fn(f"Enabled: {c}")
+        return False
+    if cmd == "disable-relay" and len(args) == 1:
+        c = store.set_relay_enabled(args[0], False)
+        log_fn(f"Disabled: {c}")
+        return False
+    if cmd == "list-sources":
+        rows = store.list_sources()
+        if not rows:
+            log_fn("No sources.")
+        else:
+            log_fn("id\tenabled\tapi_base\tapi_channel\trss_url\tlast_polled\tlast_error")
+            for (sid, enabled, api_base, api_channel, api_channel_url, rss_url, last_polled_ts, last_error) in rows:
+                lp = str(last_polled_ts) if last_polled_ts else "-"
+                le = (last_error or "").replace("\n", " ")
+                if len(le) > 80:
+                    le = le[:77] + "..."
+                api = f"{api_base or ''} {api_channel or ''}".strip()
+                log_fn(f"{sid}\t{enabled}\t{api}\t{rss_url or ''}\t{lp}\t{le}")
+        return False
+    if cmd == "add-channel" and len(args) == 1:
+        sid = store.add_channel_source(args[0])
+        log_fn(f"Added channel source id={sid}")
+        return False
+    if cmd == "add-rss" and len(args) == 1:
+        rss_norm = n.normalise_feed_url(args[0])
+        if not n.looks_like_peertube_feed(rss_norm):
+            log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still adding).")
+        sid = store.add_rss_source(args[0])
+        log_fn(f"Added RSS source id={sid} (canonical: {rss_norm})")
+        return False
+    if cmd == "set-rss" and len(args) == 2:
+        rss_norm = n.normalise_feed_url(args[1])
+        if not n.looks_like_peertube_feed(rss_norm):
+            log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
+        store.set_source_rss(int(args[0]), args[1])
+        log_fn(f"Set RSS fallback for source {args[0]} (canonical: {rss_norm})")
+        return False
+    if cmd == "enable-source" and len(args) == 1:
+        c = store.set_source_enabled(int(args[0]), True)
+        log_fn(f"Enabled: {c}")
+        return False
+    if cmd == "disable-source" and len(args) == 1:
+        c = store.set_source_enabled(int(args[0]), False)
+        log_fn(f"Disabled: {c}")
+        return False
+    if cmd == "set-nsec":
+        nsec = args[0] if args else getpass.getpass("Enter nsec: ").strip()
+        if not nsec:
+            log_fn("nsec cannot be empty.")
+            return False
+        store_type, path = set_stored_nsec(db_path, nsec)
+        if store_type == "keyring":
+            log_fn("Stored nsec in OS keyring for this DB path.")
+        else:
+            log_fn(f"Stored nsec in file: {path}")
+        return False
+    if cmd == "clear-nsec":
+        removed = clear_stored_nsec(db_path)
+        log_fn("Removed stored nsec." if removed else "No stored nsec found.")
+        return False
+
+    log_fn("Unknown or invalid command. Type '/' for usage.")
+    return False
+
+
+def _status_toolbar(store: Store, db_path: str) -> str:
+    relays = store.count_relays()
+    sources = store.count_sources()
+    pending = store.count_pending()
+    has_nsec = bool(get_stored_nsec(db_path))
+    nsec_txt = "nsec:yes" if has_nsec else "nsec:no"
+    return f" relays:{relays} sources:{sources} pending:{pending} {nsec_txt} "
+
+
+def _run_interactive(
+    args: argparse.Namespace,
+    n: UrlNormaliser,
+    nsec_env: Optional[str],
+    relays: Optional[list[str]],
+    retry: Optional[int],
+) -> None:
+    stop_event = threading.Event()
+    log_queue: Optional[Queue] = Queue() if App is not None else None
+
+    def _log_fn(msg: str) -> None:
+        if log_queue is not None:
+            log_queue.put(msg)
+        else:
+            print(msg)
+
+    def _runner_thread() -> None:
+        thread_store = Store(args.db, n)
+        thread_store.init_schema()
+        try:
+            thread_runner = Runner(thread_store, PeerTubeClient(n), NostrPublisher(), n, log_fn=_log_fn if log_queue else None)
+            thread_runner.run(
+                nsec=nsec_env,
+                relays=relays,
+                poll_seconds=args.poll_seconds,
+                publish_interval_seconds=args.publish_interval_seconds,
+                retry_failed_after_seconds=retry,
+                api_limit_per_source=args.api_limit_per_source,
+                stop_event=stop_event,
+            )
+        finally:
+            thread_store.close()
+
+    t = threading.Thread(target=_runner_thread, daemon=True)
+    t.start()
+
+    if App is not None and log_queue is not None:
+        _interactive_tui(args.db, n, stop_event, log_queue)
+    else:
+        _interactive_shell(args.db, n, stop_event)
+    t.join()
+
+
+def _interactive_tui(db_path: str, n: UrlNormaliser, stop_event: threading.Event, log_queue: Queue) -> None:
+    class PeerTubeTUI(App):
+        CSS = """
+        Screen { layout: vertical; }
+        #body { height: 1fr; }
+        #log { height: 1fr; }
+        #status { height: 1; }
+        #input { height: 3; }
+        """
+        BINDINGS = [
+            ("/", "help", "Help"),
+            ("?", "help", "Help"),
+            ("ctrl+l", "clear", "Clear"),
+            ("ctrl+c", "quit", "Quit"),
+        ]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.store = Store(db_path, n)
+            self.store.init_schema()
+            self._wizard_queue: list[tuple[str, callable, bool]] = []
+            self._wizard_active = False
+            self._pending_secret = False
+
+        def compose(self) -> ComposeResult:
+            yield Header(show_clock=True)
+            with Vertical(id="body"):
+                yield RichLog(id="log", wrap=True, highlight=True, markup=False)
+                yield Static(id="status")
+                yield Input(id="input", placeholder="Type / for commands")
+            yield Footer()
+
+        def on_mount(self) -> None:
+            self.set_interval(0.25, self._drain_logs)
+            self.set_interval(1.0, self._refresh_status)
+            self._log("== PeerTube2Nostr Interactive ==")
+            self._log("Type '/' for commands. 'quit' to exit.")
+            self._emit_help()
+            self._start_wizard_if_needed()
+
+        def on_unmount(self) -> None:
+            stop_event.set()
+            self.store.close()
+
+        def _log(self, msg: str) -> None:
+            self.query_one("#log", RichLog).write(msg)
+
+        def _emit_help(self) -> None:
+            for line in _help_lines():
+                self._log(line)
+
+        def _drain_logs(self) -> None:
+            while True:
+                try:
+                    msg = log_queue.get_nowait()
+                except Empty:
+                    break
+                self._log(msg)
+
+        def _refresh_status(self) -> None:
+            self.query_one("#status", Static).update(_status_toolbar(self.store, db_path))
+
+        def action_help(self) -> None:
+            self._emit_help()
+
+        def action_clear(self) -> None:
+            self.query_one("#log", RichLog).clear()
+
+        def action_quit(self) -> None:
+            stop_event.set()
+            self.exit()
+
+        def on_input_submitted(self, event: Input.Submitted) -> None:
+            line = event.value.strip()
+            event.input.value = ""
+            if not line:
+                return
+
+            if self._wizard_active:
+                self._handle_wizard_input(line)
+                return
+
+            if self._pending_secret:
+                self._pending_secret = False
+                event.input.password = False
+                event.input.placeholder = "Type / for commands"
+                cmd = "set-nsec"
+                args = [line]
+            else:
+                parts = shlex.split(line)
+                cmd = parts[0].lower()
+                args = parts[1:]
+
+                if cmd == "set-nsec" and not args:
+                    self._pending_secret = True
+                    event.input.password = True
+                    event.input.placeholder = "Enter nsec:"
+                    self._log("Enter nsec:")
+                    return
+
+            should_quit = _dispatch_command(self.store, n, db_path, cmd, args, self._log)
+            if should_quit:
+                self.action_quit()
+
+        def _start_wizard_if_needed(self) -> None:
+            has_sources = self.store.count_sources() > 0
+            has_nsec = bool(get_stored_nsec(db_path))
+
+            if self.store.count_relays() == 0:
+                self._wizard_queue.append(("Seed default relays? [Y/n]:", self._wiz_seed_relays, False))
+            if not has_nsec:
+                self._wizard_queue.append(("Set nsec now? [Y/n]:", self._wiz_ask_nsec, False))
+            if not has_sources:
+                self._wizard_queue.append(("Add PeerTube channel URL (blank to skip):", self._wiz_add_channel, False))
+
+            if self._wizard_queue:
+                self._wizard_active = True
+                self._advance_wizard()
+
+        def _advance_wizard(self) -> None:
+            if not self._wizard_queue:
+                self._wizard_active = False
+                inp = self.query_one("#input", Input)
+                inp.password = False
+                inp.placeholder = "Type / for commands"
+                self._log("Wizard complete.")
+                return
+            prompt, _handler, password = self._wizard_queue[0]
+            inp = self.query_one("#input", Input)
+            inp.password = password
+            inp.placeholder = prompt
+            self._log(prompt)
+
+        def _handle_wizard_input(self, value: str) -> None:
+            prompt, handler, _password = self._wizard_queue.pop(0)
+            new_steps = handler(value.strip()) or []
+            if new_steps:
+                self._wizard_queue = new_steps + self._wizard_queue
+            self._advance_wizard()
+
+        def _wiz_seed_relays(self, value: str) -> list[tuple[str, callable, bool]]:
+            ans = value.lower()
+            if ans in ("", "y", "yes"):
+                self.store.seed_default_relays_if_empty()
+                self._log("Seeded default relays.")
+            return []
+
+        def _wiz_ask_nsec(self, value: str) -> list[tuple[str, callable, bool]]:
+            ans = value.lower()
+            if ans in ("", "y", "yes"):
+                return [("Enter nsec:", self._wiz_set_nsec, True)]
+            return []
+
+        def _wiz_set_nsec(self, value: str) -> list[tuple[str, callable, bool]]:
+            if not value:
+                self._log("nsec cannot be empty.")
+                return []
+            store_type, path = set_stored_nsec(db_path, value)
+            if store_type == "keyring":
+                self._log("Stored nsec in OS keyring for this DB path.")
+            else:
+                self._log(f"Stored nsec in file: {path}")
+            return []
+
+        def _wiz_add_channel(self, value: str) -> list[tuple[str, callable, bool]]:
+            if not value:
+                return []
+            try:
+                sid = self.store.add_channel_source(value)
+                self._log(f"Added channel source id={sid}")
+            except Exception as ex:
+                self._log(f"Failed to add channel: {ex}")
+                return []
+            return [("Add RSS fallback URL (blank to skip):", lambda v: self._wiz_set_rss(v, sid), False)]
+
+        def _wiz_set_rss(self, value: str, sid: int) -> list[tuple[str, callable, bool]]:
+            if not value:
+                return []
+            try:
+                rss_norm = n.normalise_feed_url(value)
+                if not n.looks_like_peertube_feed(rss_norm):
+                    self._log("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
+                self.store.set_source_rss(sid, value)
+                self._log(f"Set RSS fallback for source {sid} (canonical: {rss_norm})")
+            except Exception as ex:
+                self._log(f"Failed to set RSS: {ex}")
+            return []
+
+    PeerTubeTUI().run()
 
 
 if __name__ == "__main__":
