@@ -902,6 +902,39 @@ class Store:
         ]
         return dict(zip(keys, row))
 
+    def next_pending_eligible(self, now_ts: int, max_per_day_per_source: int, limit: int = 200) -> Optional[dict]:
+        if max_per_day_per_source <= 0:
+            return self.next_pending()
+        rows = self.conn.execute(
+            """
+            SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
+                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url
+            FROM videos v
+            JOIN sources s ON s.id = v.source_id
+            WHERE v.status='pending' AND s.enabled=1
+            ORDER BY (v.published_ts IS NULL) ASC, v.published_ts ASC, v.first_seen_ts ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        if not rows:
+            return None
+        counts = dict(
+            self.conn.execute(
+                "SELECT source_id, COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ? GROUP BY source_id",
+                (now_ts - 86400,),
+            ).fetchall()
+        )
+        keys = [
+            "id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
+            "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
+        ]
+        for row in rows:
+            sid = int(row[1])
+            if int(counts.get(sid, 0)) < max_per_day_per_source:
+                return dict(zip(keys, row))
+        return None
+
     def mark_posted(self, video_row_id: int, event_id: str) -> None:
         ts = self.n.now_ts()
         self.conn.execute(
@@ -1436,8 +1469,9 @@ class Runner:
                 return ts
         return None
 
-    def publish_one_pending(self, nsec: str, relays: list[str]) -> None:
-        pending = self.store.next_pending()
+    def publish_one_pending(self, nsec: str, relays: list[str], pending: Optional[dict] = None) -> None:
+        if pending is None:
+            pending = self.store.next_pending()
         if not pending:
             return
 
@@ -1518,8 +1552,7 @@ class Runner:
                     max_per_day_per_source = self.store.get_daily_source_limit()
                     now_ts = self.n.now_ts()
                     last_posted = self.store.last_posted_ts() or 0
-                    pending = self.store.next_pending()
-                    pending_source = int(pending["source_id"]) if pending else None
+                    pending = self.store.next_pending_eligible(now_ts, max_per_day_per_source)
                     if last_posted and (now_ts - last_posted) < min_interval:
                         self._status("Rate limited")
                     else:
@@ -1527,16 +1560,15 @@ class Runner:
                         if posted_last_hour >= max_per_hour:
                             self._status("Rate limited")
                         else:
-                            if pending_source is not None:
-                                posted_last_day = self.store.count_posted_since_for_source(pending_source, now_ts - 86400)
-                                if posted_last_day >= max_per_day_per_source:
+                            if pending is not None:
+                                self._status("Publishing")
+                                self.publish_one_pending(nsec=nsec, relays=relays or [], pending=pending)
+                                self._status("Idle")
+                            else:
+                                if self.store.list_pending(limit=1):
                                     self._status("Rate limited")
                                 else:
-                                    self._status("Publishing")
-                                    self.publish_one_pending(nsec=nsec, relays=relays or [])
                                     self._status("Idle")
-                            else:
-                                self._status("Idle")
                 else:
                     self._status("Idle")
 
@@ -2658,6 +2690,17 @@ def _format_dashboard_panels(store: Store, db_path: str) -> dict[str, str]:
     if not rows:
         pending_lines.append("(none)")
     else:
+        now_ts = int(time.time())
+        daily_counts: dict[int, int] = {}
+        if max_per_day_per_source > 0:
+            daily_counts = dict(
+                store.conn.execute(
+                    "SELECT source_id, COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ? GROUP BY source_id",
+                    (now_ts - 86400,),
+                ).fetchall()
+            )
+        eligible_lines: list[str] = []
+        blocked_lines: list[str] = []
         for (vid, sid, title, watch_url, _first_seen_ts, published_ts, api_base, api_channel, _rss_url) in rows:
             label = title or watch_url or f"video {vid}"
             source_label = f"{api_base or ''} {api_channel or ''}".strip() or f"source {sid}"
@@ -2668,7 +2711,17 @@ def _format_dashboard_panels(store: Store, db_path: str) -> dict[str, str]:
                 age_txt = f"{age//3600}h" if age >= 3600 else f"{age//60}m"
             else:
                 age_txt = "?"
-            pending_lines.append(f"{label} ({age_txt}) [{source_label}]")
+            line = f"{label} ({age_txt}) [{source_label}]"
+            if max_per_day_per_source > 0 and int(daily_counts.get(int(sid), 0)) >= max_per_day_per_source:
+                blocked_lines.append(f"{line} (daily limit)")
+            else:
+                eligible_lines.append(line)
+        if eligible_lines:
+            pending_lines.extend(eligible_lines)
+            pending_lines.extend(blocked_lines)
+        else:
+            pending_lines.append("(no eligible items; daily limits reached)")
+            pending_lines.extend(blocked_lines)
     return {"counts": counts, "activity": activity, "rate": rate, "queue": pending_lines}
 
 
@@ -2688,15 +2741,21 @@ def _estimate_next_post(store: Store, db_path: str) -> str:
         oldest = store.oldest_posted_since(now_ts - 3600)
         if oldest:
             wait_rate = max(0, 3600 - (now_ts - oldest))
-    pending = store.next_pending()
+    pending = store.next_pending_eligible(now_ts, max_per_day_per_source)
     wait_day = 0
-    if pending:
-        sid = int(pending["source_id"])
-        posted_last_day = store.count_posted_since_for_source(sid, now_ts - 86400)
-        if posted_last_day >= max_per_day_per_source:
-            oldest_day = store.oldest_posted_since_for_source(sid, now_ts - 86400)
-            if oldest_day:
-                wait_day = max(0, 86400 - (now_ts - oldest_day))
+    if pending is None:
+        rows = store.list_pending(limit=200)
+        if rows:
+            source_ids = sorted({int(r[1]) for r in rows})
+            waits = []
+            for sid in source_ids:
+                posted_last_day = store.count_posted_since_for_source(sid, now_ts - 86400)
+                if posted_last_day >= max_per_day_per_source:
+                    oldest_day = store.oldest_posted_since_for_source(sid, now_ts - 86400)
+                    if oldest_day:
+                        waits.append(max(0, 86400 - (now_ts - oldest_day)))
+            if waits:
+                wait_day = min(waits)
     wait = max(wait_interval, wait_rate)
     wait = max(wait, wait_day)
     if wait == 0:
