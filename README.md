@@ -132,9 +132,13 @@ Environment variables (optional):
 * `NSEC_FILE` (optional, path for file-based nsec storage)
 * `NOSTR_RELAYS` (comma-separated, overrides relays in DB)
 * `POLL_SECONDS` (default `300`)
-* `PUBLISH_INTERVAL_SECONDS` (default `1`)
+* `PUBLISH_INTERVAL_SECONDS` (default `10`)
+* `min_publish_interval_seconds` (DB setting, default `1200`)
+* `max_posts_per_hour` (DB setting, default `3`)
+* `max_posts_per_day_per_source` (DB setting, default `1`)
 * `RETRY_FAILED_AFTER_SECONDS` (default `3600`)
 * `API_LIMIT_PER_SOURCE` (default `50`)
+* `NEW_SOURCE_LOOKBACK_DAYS` (default `30`, only applies on first poll of a source)
 
 Example:
 
@@ -151,8 +155,13 @@ python peertube_nostr.py run --db peertube2nostr.db
 ### Sources
 
 * `add-channel <channel_url>`: add an API-based source (primary ingest)
+* `add-source <url>`: add a source by URL (channel or RSS)
 * `add-rss <rss_url>`: add RSS-only source (fallback ingest only)
 * `set-rss <source_id> <rss_url>`: set RSS fallback for a source
+* `set-channel <source_id> <channel_url>`: set/replace channel URL for a source
+* `edit-source <source_id> [--channel-url URL|none] [--rss-url URL|none]`: edit one or both URLs (`none` clears)
+* `set-source-lookback <source_id> <days|none>`: override lookback days for a source
+* `remove-source <source_id>`: remove a source
 * `enable-source <id>` / `disable-source <id>`
 * `list-sources`
 
@@ -160,6 +169,7 @@ python peertube_nostr.py run --db peertube2nostr.db
 
 * `add-relay <relay_url>`
 * `remove-relay <id|url>`
+* `edit-relay <id|url> <new_url>`
 * `enable-relay <id|url>` / `disable-relay <id|url>`
 * `list-relays`
 
@@ -172,6 +182,12 @@ python peertube_nostr.py run --db peertube2nostr.db
 
 * `run` (poll + publish)
 * `interactive` (poll + publish + interactive CLI)
+* `sync-profile` (fetch profile metadata + NIP-65 relay list)
+* `refresh` (ingest sources once)
+* `repair-db` (normalise/repair DB fields)
+* `resync-source <id>` (clear pending + re-ingest one source)
+* `retry-failed [id]` (requeue failed items, all or by source)
+* `set-rate` / `show-rate` (configure publish throttling)
 
 Example:
 
@@ -180,7 +196,8 @@ python peertube_nostr.py interactive --db peertube2nostr.db
 ```
 
 Tip: type `/` in interactive mode to show available commands.
-With `textual` installed, `interactive` runs a full-screen TUI with a log view, status bar, and command input.
+With `textual` installed, `interactive` runs a full-screen TUI with a log view, status bar, command input, and a `/` command palette.
+Press `d` to toggle the dashboard panels.
 If `textual` isn't available, it falls back to the line-based prompt (with `prompt_toolkit` features if installed).
 
 ## Post format (what gets published)
