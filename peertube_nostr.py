@@ -766,6 +766,13 @@ class Store:
         ).fetchone()
         return int(row[0]) if row else 0
 
+    def count_posted_by_source_since(self, since_ts: int) -> dict[int, int]:
+        rows = self.conn.execute(
+            "SELECT source_id, COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ? GROUP BY source_id",
+            (since_ts,),
+        ).fetchall()
+        return {int(r[0]): int(r[1]) for r in rows}
+
     def count_posted_since_for_source(self, source_id: int, since_ts: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) FROM videos WHERE status='posted' AND source_id=? AND posted_ts >= ?",
@@ -919,12 +926,7 @@ class Store:
         ).fetchall()
         if not rows:
             return None
-        counts = dict(
-            self.conn.execute(
-                "SELECT source_id, COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ? GROUP BY source_id",
-                (now_ts - 86400,),
-            ).fetchall()
-        )
+        counts = self.count_posted_by_source_since(now_ts - 86400)
         keys = [
             "id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
             "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
@@ -997,6 +999,248 @@ class Store:
         )
         self.conn.commit()
         return cur.rowcount
+
+
+class PendingSelector:
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    def has_pending(self) -> bool:
+        return self.store.count_pending() > 0
+
+    def list_pending(self, limit: int = 200) -> list[tuple]:
+        return self.store.list_pending(limit=limit)
+
+    def next_eligible(self, now_ts: int) -> Optional[dict]:
+        max_per_day_per_source = self.store.get_daily_source_limit()
+        return self.store.next_pending_eligible(now_ts, max_per_day_per_source)
+
+    def daily_counts(self, now_ts: int) -> dict[int, int]:
+        return self.store.count_posted_by_source_since(now_ts - 86400)
+
+
+class RateLimiter:
+    def __init__(self, store: Store, now_ts: int) -> None:
+        self.store = store
+        self.now_ts = now_ts
+        self.min_interval, self.max_per_hour = store.get_publish_limits()
+        self.max_per_day_per_source = store.get_daily_source_limit()
+
+    def wait_interval(self) -> int:
+        last_posted = self.store.last_posted_ts() or 0
+        if not last_posted:
+            return 0
+        return max(0, self.min_interval - (self.now_ts - last_posted))
+
+    def wait_hourly(self) -> int:
+        posted_last_hour = self.store.count_posted_since(self.now_ts - 3600)
+        if posted_last_hour >= self.max_per_hour:
+            oldest = self.store.oldest_posted_since(self.now_ts - 3600)
+            if oldest:
+                return max(0, 3600 - (self.now_ts - oldest))
+        return 0
+
+    def wait_daily_for_source(self, source_id: Optional[int]) -> int:
+        if source_id is None or self.max_per_day_per_source <= 0:
+            return 0
+        posted_last_day = self.store.count_posted_since_for_source(source_id, self.now_ts - 86400)
+        if posted_last_day >= self.max_per_day_per_source:
+            oldest = self.store.oldest_posted_since_for_source(source_id, self.now_ts - 86400)
+            if oldest:
+                return max(0, 86400 - (self.now_ts - oldest))
+        return 0
+
+    def wait_daily_for_any(self, source_ids: list[int]) -> int:
+        if self.max_per_day_per_source <= 0:
+            return 0
+        if not source_ids:
+            return 0
+        counts = self.store.count_posted_by_source_since(self.now_ts - 86400)
+        waits = []
+        for sid in source_ids:
+            if int(counts.get(int(sid), 0)) >= self.max_per_day_per_source:
+                oldest = self.store.oldest_posted_since_for_source(int(sid), self.now_ts - 86400)
+                if oldest:
+                    waits.append(max(0, 86400 - (self.now_ts - oldest)))
+        return min(waits) if waits else 0
+
+    def next_wait(self, pending_source_id: Optional[int]) -> int:
+        return max(self.wait_interval(), self.wait_hourly(), self.wait_daily_for_source(pending_source_id))
+
+
+@dataclass
+class DashboardMetrics:
+    relays: int
+    sources: int
+    pending: int
+    posted: int
+    failed: int
+    last_poll_ts: Optional[int]
+    last_posted_ts: Optional[int]
+    min_interval: int
+    max_per_hour: int
+    max_per_day_per_source: int
+    has_nsec: bool
+    status: str
+    now_ts: int
+    next_post: str
+
+    @classmethod
+    def from_store(cls, store: Store, db_path: str) -> "DashboardMetrics":
+        now_ts = int(time.time())
+        min_interval, max_per_hour = store.get_publish_limits()
+        max_per_day_per_source = store.get_daily_source_limit()
+        return cls(
+            relays=store.count_relays(),
+            sources=store.count_sources(),
+            pending=store.count_pending(),
+            posted=store.count_posted(),
+            failed=store.count_failed(),
+            last_poll_ts=store.last_polled_ts(),
+            last_posted_ts=store.last_posted_ts(),
+            min_interval=min_interval,
+            max_per_hour=max_per_hour,
+            max_per_day_per_source=max_per_day_per_source,
+            has_nsec=bool(get_stored_nsec(db_path)),
+            status=_get_runtime_status() or "idle",
+            now_ts=now_ts,
+            next_post=_estimate_next_post(store, db_path),
+        )
+
+    def poll_age(self) -> str:
+        return f"{self.now_ts - self.last_poll_ts}s ago" if self.last_poll_ts else "never"
+
+    def post_age(self) -> str:
+        return f"{self.now_ts - self.last_posted_ts}s ago" if self.last_posted_ts else "never"
+
+    def status_toolbar(self) -> str:
+        nsec_txt = "nsec:yes" if self.has_nsec else "nsec:no"
+        status_txt = f" status:{self.status}" if self.status else ""
+        return (
+            f" relays:{self.relays} sources:{self.sources} pending:{self.pending} "
+            f"posted:{self.posted} failed:{self.failed} {nsec_txt}{status_txt} "
+        )
+
+    def dashboard_lines(self) -> list[str]:
+        return [
+            "Dashboard:",
+            f"  Relays: {self.relays}",
+            f"  Sources: {self.sources}",
+            f"  Pending: {self.pending}",
+            f"  Posted: {self.posted}",
+            f"  Failed: {self.failed}",
+            f"  Last poll: {self.poll_age()}",
+            f"  Last post: {self.post_age()}",
+            f"  Rate: min_interval={self.min_interval}s, max_per_hour={self.max_per_hour}",
+            f"  Nsec set: {'yes' if self.has_nsec else 'no'}",
+            f"  Status: {self.status}",
+            "  Hint: type '/' to open the command palette",
+        ]
+
+    def counts_block(self) -> str:
+        return "\n".join(
+            [
+                "Counts",
+                f"Relays:   {self.relays}",
+                f"Sources:  {self.sources}",
+                f"Pending:  {self.pending}",
+                f"Posted:   {self.posted}",
+                f"Failed:   {self.failed}",
+            ]
+        )
+
+    def activity_block(self) -> str:
+        return "\n".join(
+            [
+                "Activity",
+                f"Last poll: {self.poll_age()}",
+                f"Last post: {self.post_age()}",
+                f"Status:    {self.status}",
+                f"Next post: {self.next_post}",
+                f"Nsec set:  {'yes' if self.has_nsec else 'no'}",
+            ]
+        )
+
+    def rate_block(self) -> str:
+        return "\n".join(
+            [
+                "Rate Limits",
+                f"Min interval: {self.min_interval}s",
+                f"Max/hour:     {self.max_per_hour}",
+                f"Max/day/src:  {self.max_per_day_per_source}",
+            ]
+        )
+
+
+class IngestPipeline:
+    def __init__(self, store: Store, pt: "PeerTubeClient", n: UrlNormaliser, log_fn: callable) -> None:
+        self.store = store
+        self.pt = pt
+        self.n = n
+        self.log_fn = log_fn
+
+    def ingest_entries(
+        self,
+        source_id: int,
+        entries: list[dict],
+        entry_key_fn: callable,
+        watch_url_fn: callable,
+        title_fn: callable,
+        summary_fn: callable,
+        published_ts_fn: callable,
+        cutoff_ts: Optional[int],
+        channel_url_fallback: Optional[str],
+    ) -> tuple[int, int]:
+        inserted = 0
+        skipped = 0
+        for entry in entries:
+            entry_key = str(entry_key_fn(entry) or "")
+            if not entry_key:
+                continue
+            watch_url = watch_url_fn(entry)
+            if not watch_url:
+                continue
+            if self.store.video_exists(source_id, entry_key):
+                published_ts = published_ts_fn(entry)
+                if published_ts:
+                    self.store.update_published_ts_if_null(source_id, entry_key, published_ts)
+                continue
+            if cutoff_ts:
+                published_ts = published_ts_fn(entry)
+                if published_ts and published_ts < cutoff_ts:
+                    skipped += 1
+                    continue
+            published_ts = published_ts_fn(entry)
+
+            title = title_fn(entry)
+            summary = summary_fn(entry)
+
+            base, v_api_id, mp4, hls, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc = self.pt.enrich_video(watch_url)
+            if api_title:
+                title = api_title
+            if api_desc:
+                summary = api_desc
+
+            item = IngestedItem(
+                source_id=source_id,
+                entry_key=entry_key,
+                watch_url=watch_url,
+                title=title,
+                summary=summary,
+                peertube_base=base,
+                peertube_video_id=str(v_api_id) if v_api_id else None,
+                hls_url=hls,
+                mp4_url=mp4,
+                peertube_instance=instance,
+                channel_name=ch_name,
+                channel_url=ch_url or channel_url_fallback,
+                account_name=acc_name,
+                account_url=acc_url,
+                published_ts=published_ts,
+            )
+            self.store.insert_pending(item)
+            inserted += 1
+        return inserted, skipped
 
 
 class PeerTubeClient:
@@ -1267,6 +1511,7 @@ class Runner:
         self.n = n
         self.log_fn = log_fn
         self.status_fn = status_fn
+        self.ingest = IngestPipeline(store, pt, n, self._log)
 
     def _log(self, msg: str) -> None:
         if self.log_fn:
@@ -1315,60 +1560,31 @@ class Runner:
             vids = self.pt.list_channel_videos(api_base=api_base, channel=api_channel, limit=api_limit_per_source)
             if vids is not None:
                 # PeerTube API is usually newest first; we insert oldest-first for stability
-                for v in list(reversed(vids)):
-                    # best-effort IDs
-                    # "uuid" is common; sometimes "shortUUID"; sometimes "id" (numeric)
-                    vid_id = v.get("uuid") or v.get("shortUUID") or v.get("id")
+                entries = list(reversed(vids))
+
+                def api_entry_key(v: dict) -> Optional[str]:
+                    return v.get("uuid") or v.get("shortUUID") or v.get("id") or v.get("url")
+
+                def api_watch_url(v: dict) -> str:
                     watch_url = v.get("url")
-                    if not (isinstance(watch_url, str) and watch_url.startswith("http")):
-                        # construct watch URL if possible
-                        # if only base available and vid_id is a shortUUID/uuid, PeerTube watch path is usually /w/<id>
-                        if isinstance(vid_id, (str, int)) and api_base:
-                            watch_url = f"{self.n.normalise_http_url(api_base)}/w/{vid_id}"
-                        else:
-                            continue
+                    if isinstance(watch_url, str) and watch_url.startswith("http"):
+                        return watch_url
+                    vid_id = v.get("uuid") or v.get("shortUUID") or v.get("id")
+                    if isinstance(vid_id, (str, int)) and api_base:
+                        return f"{self.n.normalise_http_url(api_base)}/w/{vid_id}"
+                    return ""
 
-                    entry_key = str(vid_id or watch_url)
-                    if self.store.video_exists(sid, entry_key):
-                        published_ts = self._api_entry_ts(v)
-                        if published_ts:
-                            self.store.update_published_ts_if_null(sid, entry_key, published_ts)
-                        continue
-                    if cutoff_ts:
-                        published_ts = self._api_entry_ts(v)
-                        if published_ts and published_ts < cutoff_ts:
-                            skipped += 1
-                            continue
-                    published_ts = self._api_entry_ts(v)
-
-                    title = (v.get("name") or v.get("title") or "").strip()
-                    summary = (v.get("description") or "").strip()
-
-                    base, v_api_id, mp4, hls, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc = self.pt.enrich_video(watch_url)
-                    if api_title:
-                        title = api_title
-                    if api_desc:
-                        summary = api_desc
-
-                    item = IngestedItem(
-                        source_id=sid,
-                        entry_key=entry_key,
-                        watch_url=watch_url,
-                        title=title,
-                        summary=summary,
-                        peertube_base=base,
-                        peertube_video_id=str(v_api_id) if v_api_id else None,
-                        hls_url=hls,
-                        mp4_url=mp4,
-                        peertube_instance=instance,
-                        channel_name=ch_name,
-                        channel_url=ch_url or s.get("api_channel_url"),
-                        account_name=acc_name,
-                        account_url=acc_url,
-                        published_ts=published_ts,
-                    )
-                    self.store.insert_pending(item)
-                    inserted += 1
+                inserted, skipped = self.ingest.ingest_entries(
+                    source_id=sid,
+                    entries=entries,
+                    entry_key_fn=api_entry_key,
+                    watch_url_fn=api_watch_url,
+                    title_fn=lambda v: (v.get("name") or v.get("title") or "").strip(),
+                    summary_fn=lambda v: (v.get("description") or "").strip(),
+                    published_ts_fn=self._api_entry_ts,
+                    cutoff_ts=cutoff_ts,
+                    channel_url_fallback=s.get("api_channel_url"),
+                )
 
                 self.store.mark_source_polled(sid, None)
                 if inserted:
@@ -1384,50 +1600,17 @@ class Runner:
         if rss_url:
             try:
                 entries = self.pt.parse_rss(rss_url)
-                for e in entries:
-                    # entry key
-                    entry_key = self._rss_entry_key(e)
-                    if self.store.video_exists(sid, entry_key):
-                        published_ts = self._rss_entry_ts(e)
-                        if published_ts:
-                            self.store.update_published_ts_if_null(sid, entry_key, published_ts)
-                        continue
-                    if cutoff_ts:
-                        published_ts = self._rss_entry_ts(e)
-                        if published_ts and published_ts < cutoff_ts:
-                            skipped += 1
-                            continue
-                    published_ts = self._rss_entry_ts(e)
-
-                    title = (e.get("title") or "").strip()
-                    watch_url = (e.get("link") or "").strip()
-                    summary = (e.get("summary") or "").strip()
-
-                    base, v_api_id, mp4, hls, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc = self.pt.enrich_video(watch_url)
-                    if api_title:
-                        title = api_title
-                    if api_desc:
-                        summary = api_desc
-
-                    item = IngestedItem(
-                        source_id=sid,
-                        entry_key=entry_key,
-                        watch_url=watch_url,
-                        title=title,
-                        summary=summary,
-                        peertube_base=base,
-                        peertube_video_id=str(v_api_id) if v_api_id else None,
-                        hls_url=hls,
-                        mp4_url=mp4,
-                        peertube_instance=instance,
-                        channel_name=ch_name,
-                        channel_url=ch_url,
-                        account_name=acc_name,
-                        account_url=acc_url,
-                        published_ts=published_ts,
-                    )
-                    self.store.insert_pending(item)
-                    inserted += 1
+                inserted, skipped = self.ingest.ingest_entries(
+                    source_id=sid,
+                    entries=entries,
+                    entry_key_fn=self._rss_entry_key,
+                    watch_url_fn=lambda e: (e.get("link") or "").strip(),
+                    title_fn=lambda e: (e.get("title") or "").strip(),
+                    summary_fn=lambda e: (e.get("summary") or "").strip(),
+                    published_ts_fn=self._rss_entry_ts,
+                    cutoff_ts=cutoff_ts,
+                    channel_url_fallback=None,
+                )
 
                 self.store.mark_source_polled(sid, None if not err else err)
                 if inserted:
@@ -1509,6 +1692,7 @@ class Runner:
         self._log(f"Poll: {poll_seconds}s | Publish spacing: {publish_interval_seconds}s | API limit/source: {api_limit_per_source}")
 
         last_retry_check = 0
+        selector = PendingSelector(self.store)
 
         while True:
             try:
@@ -1548,27 +1732,28 @@ class Runner:
 
                 # publish at most one per loop iteration
                 if nsec:
-                    min_interval, max_per_hour = self.store.get_publish_limits()
-                    max_per_day_per_source = self.store.get_daily_source_limit()
                     now_ts = self.n.now_ts()
-                    last_posted = self.store.last_posted_ts() or 0
-                    pending = self.store.next_pending_eligible(now_ts, max_per_day_per_source)
-                    if last_posted and (now_ts - last_posted) < min_interval:
-                        self._status("Rate limited")
-                    else:
-                        posted_last_hour = self.store.count_posted_since(now_ts - 3600)
-                        if posted_last_hour >= max_per_hour:
+                    rate = RateLimiter(self.store, now_ts)
+                    pending = selector.next_eligible(now_ts)
+                    if pending is not None:
+                        wait = rate.next_wait(int(pending["source_id"]))
+                        if wait > 0:
                             self._status("Rate limited")
                         else:
-                            if pending is not None:
-                                self._status("Publishing")
-                                self.publish_one_pending(nsec=nsec, relays=relays or [], pending=pending)
-                                self._status("Idle")
+                            self._status("Publishing")
+                            self.publish_one_pending(nsec=nsec, relays=relays or [], pending=pending)
+                            self._status("Idle")
+                    else:
+                        if selector.has_pending():
+                            rows = selector.list_pending(limit=200)
+                            source_ids = sorted({int(r[1]) for r in rows})
+                            wait = max(rate.wait_interval(), rate.wait_hourly(), rate.wait_daily_for_any(source_ids))
+                            if wait > 0:
+                                self._status("Rate limited")
                             else:
-                                if self.store.list_pending(limit=1):
-                                    self._status("Rate limited")
-                                else:
-                                    self._status("Idle")
+                                self._status("Idle")
+                        else:
+                            self._status("Idle")
                 else:
                     self._status("Idle")
 
@@ -2354,278 +2539,369 @@ def _help_lines() -> list[str]:
     ]
 
 
-def _dispatch_command(store: Store, n: UrlNormaliser, db_path: str, cmd: str, args: list[str], log_fn) -> bool:
-    cmd = _normalize_cmd(cmd)
-    if cmd in ("/", "?", "help"):
-        _emit_help(log_fn)
-        return False
-    if cmd in ("quit", "exit"):
-        return True
-    if cmd == "status":
-        relays = store.get_enabled_relays()
-        pending = store.count_pending()
-        sources = store.count_sources()
-        has_nsec = bool(get_stored_nsec(db_path))
-        log_fn(f"Relays enabled: {len(relays)} | Sources: {sources} | Pending: {pending} | Nsec set: {has_nsec}")
-        return False
-    if cmd == "init":
-        store.init_schema()
-        store.seed_default_relays_if_empty()
-        log_fn(f"Initialised DB: {db_path}")
-        return False
-    if cmd == "sync-profile":
-        parsed = _parse_sync_profile_args(args)
-        if isinstance(parsed, str):
-            log_fn(parsed)
-            return False
-        try:
-            sync_profile(
-                store=store,
-                n=n,
-                nsec_arg=parsed.nsec,
-                relays_arg=parsed.relays,
-                import_relays=parsed.import_relays,
-                enable_imported=parsed.enable_imported,
-                disable_missing=parsed.disable_missing,
-                timeout_seconds=parsed.timeout_seconds,
-                log_fn=log_fn,
-            )
-        except SystemExit as ex:
-            msg = str(ex) or "sync-profile failed."
-            log_fn(msg)
-        except Exception as ex:
-            log_fn(f"sync-profile error: {ex}")
-        return False
-    if cmd == "refresh":
-        api_limit = int(os.environ.get("API_LIMIT_PER_SOURCE", "50"))
-        lookback_days = int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30"))
-        runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n, log_fn=log_fn)
-        runner.ingest_sources_once(api_limit, lookback_days)
-        return False
-    if cmd == "repair-db":
-        repair_db(store, n, log_fn)
-        return False
-    if cmd == "resync-source" and len(args) == 1:
-        try:
-            sid = int(args[0])
-        except ValueError:
-            log_fn("source_id must be an integer")
-            return False
-        _resync_source(store, n, sid, log_fn)
-        return False
-    if cmd == "retry-failed":
-        if args:
-            try:
-                sid = int(args[0])
-            except ValueError:
-                log_fn("source_id must be an integer")
-                return False
-            count = store.retry_failed_for_source(sid, older_than_seconds=0)
-            log_fn(f"Re-queued failed items for source {sid}: {count}")
-        else:
-            count = store.retry_failed(older_than_seconds=0)
-            log_fn(f"Re-queued failed items: {count}")
-        return False
-    if cmd == "show-rate":
-        min_interval, max_per_hour = store.get_publish_limits()
-        log_fn(f"Rate limits: min_interval_seconds={min_interval}, max_posts_per_hour={max_per_hour}")
-        return False
-    if cmd == "set-rate":
-        parsed = _parse_set_rate_args(args)
-        if isinstance(parsed, str):
-            log_fn(parsed)
-            return False
-        if parsed.min_interval_seconds is not None:
-            store.set_setting("min_publish_interval_seconds", str(int(parsed.min_interval_seconds)))
-        if parsed.max_posts_per_hour is not None:
-            store.set_setting("max_posts_per_hour", str(int(parsed.max_posts_per_hour)))
-        if parsed.max_posts_per_day_per_source is not None:
-            store.set_setting("max_posts_per_day_per_source", str(int(parsed.max_posts_per_day_per_source)))
-        min_interval, max_per_hour = store.get_publish_limits()
-        max_per_day_per_source = store.get_daily_source_limit()
-        log_fn(
-            "Rate limits: "
-            f"min_interval_seconds={min_interval}, "
-            f"max_posts_per_hour={max_per_hour}, "
-            f"max_posts_per_day_per_source={max_per_day_per_source}"
-        )
-        return False
-    if cmd == "edit-source":
-        parsed = _parse_edit_source_args(args)
-        if isinstance(parsed, str):
-            log_fn(parsed)
-            return False
-        _apply_edit_source(store, n, parsed.source_id, parsed.channel_url, parsed.rss_url, log_fn)
-        return False
-    if cmd == "list-relays":
-        rows = store.list_relays()
-        if not rows:
-            log_fn("No relays.")
-        else:
-            log_fn("id\tenabled\trelay_url\tcanonical\tlast_used\tlast_error")
-            for (rid, enabled, url, url_norm, last_used_ts, last_error) in rows:
-                lu = str(last_used_ts) if last_used_ts else "-"
-                le = (last_error or "").replace("\n", " ")
-                if len(le) > 80:
-                    le = le[:77] + "..."
-                log_fn(f"{rid}\t{enabled}\t{url}\t{url_norm}\t{lu}\t{le}")
-        return False
-    if cmd == "add-relay" and len(args) == 1:
-        rid = store.add_relay(args[0])
-        log_fn(f"Added relay id={rid}")
-        return False
-    if cmd == "add-source" and len(args) == 1:
-        if not _maybe_add_url_as_source(store, n, args[0], log_fn):
-            log_fn("URL did not look like a PeerTube channel or RSS feed.")
-        return False
-    if cmd == "remove-relay" and len(args) == 1:
-        c = store.remove_relay(args[0])
-        log_fn(f"Removed: {c}")
-        return False
-    if cmd == "edit-relay" and len(args) == 2:
-        c = store.update_relay_url(args[0], args[1])
-        log_fn(f"Updated: {c}")
-        return False
-    if cmd == "enable-relay" and len(args) == 1:
-        c = store.set_relay_enabled(args[0], True)
-        log_fn(f"Enabled: {c}")
-        return False
-    if cmd == "disable-relay" and len(args) == 1:
-        c = store.set_relay_enabled(args[0], False)
-        log_fn(f"Disabled: {c}")
-        return False
-    if cmd == "list-sources":
-        rows = store.list_sources()
-        if not rows:
-            log_fn("No sources.")
-        else:
-            log_fn("id\tenabled\tapi_base\tapi_channel\trss_url\tlookback\tlast_status\tlast_polled\tlast_error")
-            for (sid, enabled, api_base, api_channel, api_channel_url, rss_url, lookback_days, last_polled_ts, last_error) in rows:
-                lp = str(last_polled_ts) if last_polled_ts else "-"
-                lb = str(lookback_days) if lookback_days is not None else "-"
-                if last_polled_ts:
-                    status = "ERR" if last_error else "OK"
-                else:
-                    status = "NEVER"
-                le = (last_error or "").replace("\n", " ")
-                if len(le) > 80:
-                    le = le[:77] + "..."
-                api = f"{api_base or ''} {api_channel or ''}".strip()
-                log_fn(f"{sid}\t{enabled}\t{api}\t{rss_url or ''}\t{lb}\t{status}\t{lp}\t{le}")
-        return False
-    if cmd == "add-channel" and len(args) == 1:
-        sid = store.add_channel_source(args[0])
-        log_fn(f"Added channel source id={sid}")
-        return False
-    if cmd == "add-rss" and len(args) == 1:
-        rss_norm = n.normalise_feed_url(args[0])
-        if not n.looks_like_peertube_feed(rss_norm):
-            log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still adding).")
-        sid = store.add_rss_source(args[0])
-        log_fn(f"Added RSS source id={sid} (canonical: {rss_norm})")
-        return False
-    if cmd == "set-rss" and len(args) == 2:
-        rss_norm = n.normalise_feed_url(args[1])
-        if not n.looks_like_peertube_feed(rss_norm):
-            log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
-        store.set_source_rss(int(args[0]), args[1])
-        log_fn(f"Set RSS fallback for source {args[0]} (canonical: {rss_norm})")
-        return False
-    if cmd == "set-channel" and len(args) == 2:
-        store.set_source_channel(int(args[0]), args[1])
-        log_fn(f"Set channel URL for source {args[0]}")
-        return False
-    if cmd == "set-source-lookback" and len(args) == 2:
-        val = str(args[1]).strip().lower()
-        if val in ("none", "null", "off"):
-            store.set_source_lookback(int(args[0]), None)
-            log_fn(f"Cleared lookback for source {args[0]}")
-            return False
-        try:
-            days = int(val)
-        except ValueError:
-            log_fn("lookback_days must be an integer or 'none'")
-            return False
-        store.set_source_lookback(int(args[0]), days)
-        log_fn(f"Set lookback_days={days} for source {args[0]}")
-        return False
-    if not args and cmd.startswith(("http://", "https://")):
-        if _maybe_add_url_as_source(store, n, cmd, log_fn):
-            return False
-    if cmd == "enable-source" and len(args) == 1:
-        c = store.set_source_enabled(int(args[0]), True)
-        log_fn(f"Enabled: {c}")
-        return False
-    if cmd == "disable-source" and len(args) == 1:
-        c = store.set_source_enabled(int(args[0]), False)
-        log_fn(f"Disabled: {c}")
-        return False
-    if cmd == "remove-source" and len(args) == 1:
-        c = store.remove_source(int(args[0]))
-        log_fn(f"Removed: {c}")
-        return False
-    if cmd == "set-nsec":
-        nsec = args[0] if args else getpass.getpass("Enter nsec: ").strip()
-        if not nsec:
-            log_fn("nsec cannot be empty.")
-            return False
-        store_type, path = set_stored_nsec(db_path, nsec)
-        if store_type == "keyring":
-            log_fn("Stored nsec in OS keyring for this DB path.")
-        else:
-            log_fn(f"Stored nsec in file: {path}")
-        return False
-    if cmd == "clear-nsec":
-        removed = clear_stored_nsec(db_path)
-        log_fn("Removed stored nsec." if removed else "No stored nsec found.")
-        return False
+@dataclass
+class CommandContext:
+    store: Store
+    n: UrlNormaliser
+    db_path: str
+    log_fn: callable
 
-    log_fn("Unknown or invalid command. Type '/' for usage.")
+
+class CommandRegistry:
+    def __init__(self) -> None:
+        self._handlers: dict[str, tuple[callable, int, Optional[int]]] = {}
+
+    def register(self, name: str, handler: callable, min_args: int = 0, max_args: Optional[int] = None) -> None:
+        self._handlers[name] = (handler, min_args, max_args)
+
+    def dispatch(self, ctx: CommandContext, cmd: str, args: list[str]) -> bool:
+        cmd = _normalize_cmd(cmd)
+        if cmd in ("/", "?", "help"):
+            _emit_help(ctx.log_fn)
+            return False
+        if cmd in ("quit", "exit"):
+            return True
+        if not args and cmd.startswith(("http://", "https://")):
+            if _maybe_add_url_as_source(ctx.store, ctx.n, cmd, ctx.log_fn):
+                return False
+        entry = self._handlers.get(cmd)
+        if not entry:
+            ctx.log_fn("Unknown or invalid command. Type '/' for usage.")
+            return False
+        handler, min_args, max_args = entry
+        if len(args) < min_args:
+            ctx.log_fn("Unknown or invalid command. Type '/' for usage.")
+            return False
+        if max_args is not None and len(args) > max_args:
+            ctx.log_fn("Unknown or invalid command. Type '/' for usage.")
+            return False
+        return bool(handler(ctx, args))
+
+
+def _cmd_status(ctx: CommandContext, _args: list[str]) -> bool:
+    relays = ctx.store.get_enabled_relays()
+    pending = ctx.store.count_pending()
+    sources = ctx.store.count_sources()
+    has_nsec = bool(get_stored_nsec(ctx.db_path))
+    ctx.log_fn(f"Relays enabled: {len(relays)} | Sources: {sources} | Pending: {pending} | Nsec set: {has_nsec}")
     return False
 
 
+def _cmd_init(ctx: CommandContext, _args: list[str]) -> bool:
+    ctx.store.init_schema()
+    ctx.store.seed_default_relays_if_empty()
+    ctx.log_fn(f"Initialised DB: {ctx.db_path}")
+    return False
+
+
+def _cmd_sync_profile(ctx: CommandContext, args: list[str]) -> bool:
+    parsed = _parse_sync_profile_args(args)
+    if isinstance(parsed, str):
+        ctx.log_fn(parsed)
+        return False
+    try:
+        sync_profile(
+            store=ctx.store,
+            n=ctx.n,
+            nsec_arg=parsed.nsec,
+            relays_arg=parsed.relays,
+            import_relays=parsed.import_relays,
+            enable_imported=parsed.enable_imported,
+            disable_missing=parsed.disable_missing,
+            timeout_seconds=parsed.timeout_seconds,
+            log_fn=ctx.log_fn,
+        )
+    except SystemExit as ex:
+        msg = str(ex) or "sync-profile failed."
+        ctx.log_fn(msg)
+    except Exception as ex:
+        ctx.log_fn(f"sync-profile error: {ex}")
+    return False
+
+
+def _cmd_refresh(ctx: CommandContext, _args: list[str]) -> bool:
+    api_limit = int(os.environ.get("API_LIMIT_PER_SOURCE", "50"))
+    lookback_days = int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30"))
+    runner = Runner(ctx.store, PeerTubeClient(ctx.n), NostrPublisher(), ctx.n, log_fn=ctx.log_fn)
+    runner.ingest_sources_once(api_limit, lookback_days)
+    return False
+
+
+def _cmd_repair_db(ctx: CommandContext, _args: list[str]) -> bool:
+    repair_db(ctx.store, ctx.n, ctx.log_fn)
+    return False
+
+
+def _cmd_resync_source(ctx: CommandContext, args: list[str]) -> bool:
+    try:
+        sid = int(args[0])
+    except ValueError:
+        ctx.log_fn("source_id must be an integer")
+        return False
+    _resync_source(ctx.store, ctx.n, sid, ctx.log_fn)
+    return False
+
+
+def _cmd_retry_failed(ctx: CommandContext, args: list[str]) -> bool:
+    if args:
+        try:
+            sid = int(args[0])
+        except ValueError:
+            ctx.log_fn("source_id must be an integer")
+            return False
+        count = ctx.store.retry_failed_for_source(sid, older_than_seconds=0)
+        ctx.log_fn(f"Re-queued failed items for source {sid}: {count}")
+    else:
+        count = ctx.store.retry_failed(older_than_seconds=0)
+        ctx.log_fn(f"Re-queued failed items: {count}")
+    return False
+
+
+def _cmd_show_rate(ctx: CommandContext, _args: list[str]) -> bool:
+    min_interval, max_per_hour = ctx.store.get_publish_limits()
+    ctx.log_fn(f"Rate limits: min_interval_seconds={min_interval}, max_posts_per_hour={max_per_hour}")
+    return False
+
+
+def _cmd_set_rate(ctx: CommandContext, args: list[str]) -> bool:
+    parsed = _parse_set_rate_args(args)
+    if isinstance(parsed, str):
+        ctx.log_fn(parsed)
+        return False
+    if parsed.min_interval_seconds is not None:
+        ctx.store.set_setting("min_publish_interval_seconds", str(int(parsed.min_interval_seconds)))
+    if parsed.max_posts_per_hour is not None:
+        ctx.store.set_setting("max_posts_per_hour", str(int(parsed.max_posts_per_hour)))
+    if parsed.max_posts_per_day_per_source is not None:
+        ctx.store.set_setting("max_posts_per_day_per_source", str(int(parsed.max_posts_per_day_per_source)))
+    min_interval, max_per_hour = ctx.store.get_publish_limits()
+    max_per_day_per_source = ctx.store.get_daily_source_limit()
+    ctx.log_fn(
+        "Rate limits: "
+        f"min_interval_seconds={min_interval}, "
+        f"max_posts_per_hour={max_per_hour}, "
+        f"max_posts_per_day_per_source={max_per_day_per_source}"
+    )
+    return False
+
+
+def _cmd_edit_source(ctx: CommandContext, args: list[str]) -> bool:
+    parsed = _parse_edit_source_args(args)
+    if isinstance(parsed, str):
+        ctx.log_fn(parsed)
+        return False
+    _apply_edit_source(ctx.store, ctx.n, parsed.source_id, parsed.channel_url, parsed.rss_url, ctx.log_fn)
+    return False
+
+
+def _cmd_list_relays(ctx: CommandContext, _args: list[str]) -> bool:
+    rows = ctx.store.list_relays()
+    if not rows:
+        ctx.log_fn("No relays.")
+    else:
+        ctx.log_fn("id\tenabled\trelay_url\tcanonical\tlast_used\tlast_error")
+        for (rid, enabled, url, url_norm, last_used_ts, last_error) in rows:
+            lu = str(last_used_ts) if last_used_ts else "-"
+            le = (last_error or "").replace("\n", " ")
+            if len(le) > 80:
+                le = le[:77] + "..."
+            ctx.log_fn(f"{rid}\t{enabled}\t{url}\t{url_norm}\t{lu}\t{le}")
+    return False
+
+
+def _cmd_add_relay(ctx: CommandContext, args: list[str]) -> bool:
+    rid = ctx.store.add_relay(args[0])
+    ctx.log_fn(f"Added relay id={rid}")
+    return False
+
+
+def _cmd_add_source(ctx: CommandContext, args: list[str]) -> bool:
+    if not _maybe_add_url_as_source(ctx.store, ctx.n, args[0], ctx.log_fn):
+        ctx.log_fn("URL did not look like a PeerTube channel or RSS feed.")
+    return False
+
+
+def _cmd_remove_relay(ctx: CommandContext, args: list[str]) -> bool:
+    c = ctx.store.remove_relay(args[0])
+    ctx.log_fn(f"Removed: {c}")
+    return False
+
+
+def _cmd_edit_relay(ctx: CommandContext, args: list[str]) -> bool:
+    c = ctx.store.update_relay_url(args[0], args[1])
+    ctx.log_fn(f"Updated: {c}")
+    return False
+
+
+def _cmd_enable_relay(ctx: CommandContext, args: list[str]) -> bool:
+    c = ctx.store.set_relay_enabled(args[0], True)
+    ctx.log_fn(f"Enabled: {c}")
+    return False
+
+
+def _cmd_disable_relay(ctx: CommandContext, args: list[str]) -> bool:
+    c = ctx.store.set_relay_enabled(args[0], False)
+    ctx.log_fn(f"Disabled: {c}")
+    return False
+
+
+def _cmd_list_sources(ctx: CommandContext, _args: list[str]) -> bool:
+    rows = ctx.store.list_sources()
+    if not rows:
+        ctx.log_fn("No sources.")
+    else:
+        ctx.log_fn("id\tenabled\tapi_base\tapi_channel\trss_url\tlookback\tlast_status\tlast_polled\tlast_error")
+        for (sid, enabled, api_base, api_channel, api_channel_url, rss_url, lookback_days, last_polled_ts, last_error) in rows:
+            lp = str(last_polled_ts) if last_polled_ts else "-"
+            lb = str(lookback_days) if lookback_days is not None else "-"
+            if last_polled_ts:
+                status = "ERR" if last_error else "OK"
+            else:
+                status = "NEVER"
+            le = (last_error or "").replace("\n", " ")
+            if len(le) > 80:
+                le = le[:77] + "..."
+            api = f"{api_base or ''} {api_channel or ''}".strip()
+            ctx.log_fn(f"{sid}\t{enabled}\t{api}\t{rss_url or ''}\t{lb}\t{status}\t{lp}\t{le}")
+    return False
+
+
+def _cmd_add_channel(ctx: CommandContext, args: list[str]) -> bool:
+    sid = ctx.store.add_channel_source(args[0])
+    ctx.log_fn(f"Added channel source id={sid}")
+    return False
+
+
+def _cmd_add_rss(ctx: CommandContext, args: list[str]) -> bool:
+    rss_norm = ctx.n.normalise_feed_url(args[0])
+    if not ctx.n.looks_like_peertube_feed(rss_norm):
+        ctx.log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still adding).")
+    sid = ctx.store.add_rss_source(args[0])
+    ctx.log_fn(f"Added RSS source id={sid} (canonical: {rss_norm})")
+    return False
+
+
+def _cmd_set_rss(ctx: CommandContext, args: list[str]) -> bool:
+    rss_norm = ctx.n.normalise_feed_url(args[1])
+    if not ctx.n.looks_like_peertube_feed(rss_norm):
+        ctx.log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
+    ctx.store.set_source_rss(int(args[0]), args[1])
+    ctx.log_fn(f"Set RSS fallback for source {args[0]} (canonical: {rss_norm})")
+    return False
+
+
+def _cmd_set_channel(ctx: CommandContext, args: list[str]) -> bool:
+    ctx.store.set_source_channel(int(args[0]), args[1])
+    ctx.log_fn(f"Set channel URL for source {args[0]}")
+    return False
+
+
+def _cmd_set_source_lookback(ctx: CommandContext, args: list[str]) -> bool:
+    val = str(args[1]).strip().lower()
+    if val in ("none", "null", "off"):
+        ctx.store.set_source_lookback(int(args[0]), None)
+        ctx.log_fn(f"Cleared lookback for source {args[0]}")
+        return False
+    try:
+        days = int(val)
+    except ValueError:
+        ctx.log_fn("lookback_days must be an integer or 'none'")
+        return False
+    ctx.store.set_source_lookback(int(args[0]), days)
+    ctx.log_fn(f"Set lookback_days={days} for source {args[0]}")
+    return False
+
+
+def _cmd_enable_source(ctx: CommandContext, args: list[str]) -> bool:
+    c = ctx.store.set_source_enabled(int(args[0]), True)
+    ctx.log_fn(f"Enabled: {c}")
+    return False
+
+
+def _cmd_disable_source(ctx: CommandContext, args: list[str]) -> bool:
+    c = ctx.store.set_source_enabled(int(args[0]), False)
+    ctx.log_fn(f"Disabled: {c}")
+    return False
+
+
+def _cmd_remove_source(ctx: CommandContext, args: list[str]) -> bool:
+    c = ctx.store.remove_source(int(args[0]))
+    ctx.log_fn(f"Removed: {c}")
+    return False
+
+
+def _cmd_set_nsec(ctx: CommandContext, args: list[str]) -> bool:
+    nsec = args[0] if args else getpass.getpass("Enter nsec: ").strip()
+    if not nsec:
+        ctx.log_fn("nsec cannot be empty.")
+        return False
+    store_type, path = set_stored_nsec(ctx.db_path, nsec)
+    if store_type == "keyring":
+        ctx.log_fn("Stored nsec in OS keyring for this DB path.")
+    else:
+        ctx.log_fn(f"Stored nsec in file: {path}")
+    return False
+
+
+def _cmd_clear_nsec(ctx: CommandContext, _args: list[str]) -> bool:
+    removed = clear_stored_nsec(ctx.db_path)
+    ctx.log_fn("Removed stored nsec." if removed else "No stored nsec found.")
+    return False
+
+
+_COMMAND_REGISTRY: Optional[CommandRegistry] = None
+
+
+def _get_command_registry() -> CommandRegistry:
+    global _COMMAND_REGISTRY
+    if _COMMAND_REGISTRY is not None:
+        return _COMMAND_REGISTRY
+    reg = CommandRegistry()
+    reg.register("status", _cmd_status, min_args=0, max_args=0)
+    reg.register("init", _cmd_init, min_args=0, max_args=0)
+    reg.register("sync-profile", _cmd_sync_profile)
+    reg.register("refresh", _cmd_refresh, min_args=0, max_args=0)
+    reg.register("repair-db", _cmd_repair_db, min_args=0, max_args=0)
+    reg.register("resync-source", _cmd_resync_source, min_args=1, max_args=1)
+    reg.register("retry-failed", _cmd_retry_failed, min_args=0, max_args=1)
+    reg.register("show-rate", _cmd_show_rate, min_args=0, max_args=0)
+    reg.register("set-rate", _cmd_set_rate)
+    reg.register("edit-source", _cmd_edit_source)
+    reg.register("list-relays", _cmd_list_relays, min_args=0, max_args=0)
+    reg.register("add-relay", _cmd_add_relay, min_args=1, max_args=1)
+    reg.register("remove-relay", _cmd_remove_relay, min_args=1, max_args=1)
+    reg.register("edit-relay", _cmd_edit_relay, min_args=2, max_args=2)
+    reg.register("enable-relay", _cmd_enable_relay, min_args=1, max_args=1)
+    reg.register("disable-relay", _cmd_disable_relay, min_args=1, max_args=1)
+    reg.register("list-sources", _cmd_list_sources, min_args=0, max_args=0)
+    reg.register("add-channel", _cmd_add_channel, min_args=1, max_args=1)
+    reg.register("add-source", _cmd_add_source, min_args=1, max_args=1)
+    reg.register("add-rss", _cmd_add_rss, min_args=1, max_args=1)
+    reg.register("set-rss", _cmd_set_rss, min_args=2, max_args=2)
+    reg.register("set-channel", _cmd_set_channel, min_args=2, max_args=2)
+    reg.register("set-source-lookback", _cmd_set_source_lookback, min_args=2, max_args=2)
+    reg.register("enable-source", _cmd_enable_source, min_args=1, max_args=1)
+    reg.register("disable-source", _cmd_disable_source, min_args=1, max_args=1)
+    reg.register("remove-source", _cmd_remove_source, min_args=1, max_args=1)
+    reg.register("set-nsec", _cmd_set_nsec)
+    reg.register("clear-nsec", _cmd_clear_nsec, min_args=0, max_args=0)
+    _COMMAND_REGISTRY = reg
+    return reg
+
+
+def _dispatch_command(store: Store, n: UrlNormaliser, db_path: str, cmd: str, args: list[str], log_fn) -> bool:
+    ctx = CommandContext(store=store, n=n, db_path=db_path, log_fn=log_fn)
+    return _get_command_registry().dispatch(ctx, cmd, args)
+
+
 def _status_toolbar(store: Store, db_path: str) -> str:
-    relays = store.count_relays()
-    sources = store.count_sources()
-    pending = store.count_pending()
-    posted = store.count_posted()
-    failed = store.count_failed()
-    has_nsec = bool(get_stored_nsec(db_path))
-    nsec_txt = "nsec:yes" if has_nsec else "nsec:no"
-    status = _get_runtime_status()
-    status_txt = f" status:{status}" if status else ""
-    return f" relays:{relays} sources:{sources} pending:{pending} posted:{posted} failed:{failed} {nsec_txt}{status_txt} "
+    metrics = DashboardMetrics.from_store(store, db_path)
+    return metrics.status_toolbar()
 
 
 def _interactive_dashboard(store: Store, db_path: str) -> str:
-    relays = store.count_relays()
-    sources = store.count_sources()
-    pending = store.count_pending()
-    posted = store.count_posted()
-    failed = store.count_failed()
-    last_poll = store.last_polled_ts()
-    last_posted = store.last_posted_ts()
-    min_interval, max_per_hour = store.get_publish_limits()
-    has_nsec = "yes" if get_stored_nsec(db_path) else "no"
-    now = int(time.time())
-    poll_age = f"{now - last_poll}s ago" if last_poll else "never"
-    post_age = f"{now - last_posted}s ago" if last_posted else "never"
-    status = _get_runtime_status() or "idle"
-    lines = [
-        "Dashboard:",
-        f"  Relays: {relays}",
-        f"  Sources: {sources}",
-        f"  Pending: {pending}",
-        f"  Posted: {posted}",
-        f"  Failed: {failed}",
-        f"  Last poll: {poll_age}",
-        f"  Last post: {post_age}",
-        f"  Rate: min_interval={min_interval}s, max_per_hour={max_per_hour}",
-        f"  Nsec set: {has_nsec}",
-        f"  Status: {status}",
-        "  Hint: type '/' to open the command palette",
-    ]
-    return "\n".join(lines)
+    metrics = DashboardMetrics.from_store(store, db_path)
+    return "\n".join(metrics.dashboard_lines())
 
 
 _RUNTIME_STATUS = ""
@@ -2641,64 +2917,18 @@ def _get_runtime_status() -> str:
 
 
 def _format_dashboard_panels(store: Store, db_path: str) -> dict[str, str]:
-    relays = store.count_relays()
-    sources = store.count_sources()
-    pending = store.count_pending()
-    posted = store.count_posted()
-    failed = store.count_failed()
-    last_poll = store.last_polled_ts()
-    last_posted = store.last_posted_ts()
-    min_interval, max_per_hour = store.get_publish_limits()
-    max_per_day_per_source = store.get_daily_source_limit()
-    has_nsec = "yes" if get_stored_nsec(db_path) else "no"
-    now = int(time.time())
-    poll_age = f"{now - last_poll}s ago" if last_poll else "never"
-    post_age = f"{now - last_posted}s ago" if last_posted else "never"
-    status = _get_runtime_status() or "idle"
-    next_post = _estimate_next_post(store, db_path)
-
-    counts = "\n".join(
-        [
-            "Counts",
-            f"Relays:   {relays}",
-            f"Sources:  {sources}",
-            f"Pending:  {pending}",
-            f"Posted:   {posted}",
-            f"Failed:   {failed}",
-        ]
-    )
-    activity = "\n".join(
-        [
-            "Activity",
-            f"Last poll: {poll_age}",
-            f"Last post: {post_age}",
-            f"Status:    {status}",
-            f"Next post: {next_post}",
-            f"Nsec set:  {has_nsec}",
-        ]
-    )
-    rate = "\n".join(
-        [
-            "Rate Limits",
-            f"Min interval: {min_interval}s",
-            f"Max/hour:     {max_per_hour}",
-            f"Max/day/src:  {max_per_day_per_source}",
-        ]
-    )
+    metrics = DashboardMetrics.from_store(store, db_path)
+    counts = metrics.counts_block()
+    activity = metrics.activity_block()
+    rate = metrics.rate_block()
     pending_lines: list[str] = []
-    rows = store.list_pending(limit=200)
+    selector = PendingSelector(store)
+    rows = selector.list_pending(limit=200)
     if not rows:
         pending_lines.append("(none)")
     else:
         now_ts = int(time.time())
-        daily_counts: dict[int, int] = {}
-        if max_per_day_per_source > 0:
-            daily_counts = dict(
-                store.conn.execute(
-                    "SELECT source_id, COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ? GROUP BY source_id",
-                    (now_ts - 86400,),
-                ).fetchall()
-            )
+        daily_counts = selector.daily_counts(now_ts) if metrics.max_per_day_per_source > 0 else {}
         eligible_lines: list[str] = []
         blocked_lines: list[str] = []
         for (vid, sid, title, watch_url, _first_seen_ts, published_ts, api_base, api_channel, _rss_url) in rows:
@@ -2712,7 +2942,7 @@ def _format_dashboard_panels(store: Store, db_path: str) -> dict[str, str]:
             else:
                 age_txt = "?"
             line = f"{label} ({age_txt}) [{source_label}]"
-            if max_per_day_per_source > 0 and int(daily_counts.get(int(sid), 0)) >= max_per_day_per_source:
+            if metrics.max_per_day_per_source > 0 and int(daily_counts.get(int(sid), 0)) >= metrics.max_per_day_per_source:
                 blocked_lines.append(f"{line} (daily limit)")
             else:
                 eligible_lines.append(line)
@@ -2730,34 +2960,15 @@ def _estimate_next_post(store: Store, db_path: str) -> str:
         return "none"
     if not get_stored_nsec(db_path):
         return "nsec missing"
-    min_interval, max_per_hour = store.get_publish_limits()
-    max_per_day_per_source = store.get_daily_source_limit()
     now_ts = int(time.time())
-    last_posted = store.last_posted_ts() or 0
-    wait_interval = max(0, min_interval - (now_ts - last_posted)) if last_posted else 0
-    posted_last_hour = store.count_posted_since(now_ts - 3600)
-    wait_rate = 0
-    if posted_last_hour >= max_per_hour:
-        oldest = store.oldest_posted_since(now_ts - 3600)
-        if oldest:
-            wait_rate = max(0, 3600 - (now_ts - oldest))
-    pending = store.next_pending_eligible(now_ts, max_per_day_per_source)
-    wait_day = 0
-    if pending is None:
-        rows = store.list_pending(limit=200)
-        if rows:
-            source_ids = sorted({int(r[1]) for r in rows})
-            waits = []
-            for sid in source_ids:
-                posted_last_day = store.count_posted_since_for_source(sid, now_ts - 86400)
-                if posted_last_day >= max_per_day_per_source:
-                    oldest_day = store.oldest_posted_since_for_source(sid, now_ts - 86400)
-                    if oldest_day:
-                        waits.append(max(0, 86400 - (now_ts - oldest_day)))
-            if waits:
-                wait_day = min(waits)
-    wait = max(wait_interval, wait_rate)
-    wait = max(wait, wait_day)
+    selector = PendingSelector(store)
+    rate = RateLimiter(store, now_ts)
+    pending = selector.next_eligible(now_ts)
+    wait = rate.next_wait(int(pending["source_id"])) if pending else 0
+    if pending is None and selector.has_pending():
+        rows = selector.list_pending(limit=200)
+        source_ids = sorted({int(r[1]) for r in rows})
+        wait = max(wait, rate.wait_interval(), rate.wait_hourly(), rate.wait_daily_for_any(source_ids))
     if wait == 0:
         return "now"
     return f"in {wait}s"
@@ -3515,204 +3726,218 @@ def _interactive_tui(db_path: str, n: UrlNormaliser, stop_event: threading.Event
                 self._handle_wizard_input(line)
                 return
 
-            if self._pending_secret:
-                self._pending_secret = False
-                event.input.password = False
-                event.input.placeholder = "Type / for commands"
-                cmd = "set-nsec"
-                args = [line]
-            else:
-                if self._pending_cmd:
-                    if line.lower() in ("cancel", "exit"):
-                        self._reset_pending(event.input, canceled=True)
-                        return
-                    if not line and not self._pending_allow_blank:
-                        self._reset_pending(event.input, canceled=True)
-                        return
-                    self._pending_args.append(line)
-                    if self._pending_prompts:
-                        self._prompt_next_pending(event.input)
-                        return
-                    cmd = self._pending_cmd
-                    args = self._pending_args
-                    if cmd == "edit-source":
-                        if len(args) == 1 and not self._pending_edit_choice:
-                            self._pending_prompts = [("Change what? (channel/rss/both)", False)]
-                            self._prompt_next_pending(event.input)
-                            return
-                        if self._pending_edit_choice == "":
-                            self._pending_edit_choice = args[1].strip().lower() if len(args) > 1 else ""
-                            if self._pending_edit_choice not in ("channel", "rss", "both"):
-                                self._log("Choose: channel, rss, or both.")
-                                self._pending_args = [args[0]]
-                                self._pending_prompts = [("Change what? (channel/rss/both)", False)]
-                                self._prompt_next_pending(event.input)
-                                return
-                            prompts = []
-                            if self._pending_edit_choice in ("channel", "both"):
-                                prompts.append(("Channel URL (blank to skip, 'none' to clear)", True))
-                            if self._pending_edit_choice in ("rss", "both"):
-                                prompts.append(("RSS URL (blank to skip, 'none' to clear)", True))
-                            self._pending_prompts = prompts
-                            self._pending_args = [args[0], self._pending_edit_choice]
-                            self._prompt_next_pending(event.input)
-                            return
-                        source_id = args[0] if len(args) > 0 else ""
-                        choice = args[1] if len(args) > 1 else ""
-                        channel_url = None
-                        rss_url = None
-                        cursor = 2
-                        if choice in ("channel", "both"):
-                            channel_url = args[cursor] if len(args) > cursor and args[cursor] else None
-                            cursor += 1
-                        if choice in ("rss", "both"):
-                            rss_url = args[cursor] if len(args) > cursor and args[cursor] else None
-                        _apply_edit_source(self.store, n, source_id, channel_url, rss_url, self._log)
-                        self._reset_pending(event.input)
-                        return
-                    if cmd == "add-channel":
-                        self._wiz_add_channel(args[0] if args else "")
-                        self._reset_pending(event.input)
-                        return
-                    if cmd == "add-rss":
-                        if not _maybe_add_url_as_source(self.store, n, args[0] if args else "", self._log):
-                            self._log("Invalid RSS URL.")
-                        self._reset_pending(event.input)
-                        return
-                    if cmd == "add-source":
-                        self._wiz_add_source(args[0] if args else "")
-                        self._reset_pending(event.input)
-                        return
-                    if cmd == "set-rate":
-                        min_int = args[0] if len(args) > 0 else ""
-                        max_per = args[1] if len(args) > 1 else ""
-                        max_day = args[2] if len(args) > 2 else ""
-                        parsed = _parse_set_rate_args(
-                            ([f"--min-interval-seconds={min_int}"] if min_int else [])
-                            + ([f"--max-posts-per-hour={max_per}"] if max_per else [])
-                            + ([f"--max-posts-per-day-per-source={max_day}"] if max_day else [])
-                        )
-                        if isinstance(parsed, str):
-                            self._log(parsed)
-                        else:
-                            if parsed.min_interval_seconds is not None:
-                                self.store.set_setting("min_publish_interval_seconds", str(int(parsed.min_interval_seconds)))
-                            if parsed.max_posts_per_hour is not None:
-                                self.store.set_setting("max_posts_per_hour", str(int(parsed.max_posts_per_hour)))
-                            if parsed.max_posts_per_day_per_source is not None:
-                                self.store.set_setting(
-                                    "max_posts_per_day_per_source",
-                                    str(int(parsed.max_posts_per_day_per_source)),
-                                )
-                            min_interval, max_per_hour = self.store.get_publish_limits()
-                            max_per_day_per_source = self.store.get_daily_source_limit()
-                            self._log(
-                                "Rate limits: "
-                                f"min_interval_seconds={min_interval}, "
-                                f"max_posts_per_hour={max_per_hour}, "
-                                f"max_posts_per_day_per_source={max_per_day_per_source}"
-                            )
-                        self._reset_pending(event.input)
-                        return
-                    if cmd == "resync-source":
-                        source_id = args[0] if args else ""
-                        if not source_id:
-                            self._log("Canceled.")
-                        else:
-                            _resync_source(self.store, n, int(source_id), self._log)
-                        self._reset_pending(event.input)
-                        return
-                    if cmd == "retry-failed":
-                        if args:
-                            count = self.store.retry_failed_for_source(int(args[0]), older_than_seconds=0)
-                            self._log(f"Re-queued failed items for source {args[0]}: {count}")
-                        else:
-                            count = self.store.retry_failed(older_than_seconds=0)
-                            self._log(f"Re-queued failed items: {count}")
-                        self._reset_pending(event.input)
-                        return
-                    self._reset_pending(event.input)
-                else:
-                    if line.startswith(("http://", "https://")) and self._last_prompt:
-                        lp = self._last_prompt.lower()
-                        if "channel or rss" in lp:
-                            self._wiz_add_source(line)
-                            return
-                        if "channel url" in lp:
-                            self._wiz_add_channel(line)
-                            return
-                        if "rss url" in lp:
-                            if not _maybe_add_url_as_source(self.store, n, line, self._log):
-                                self._log("Invalid RSS URL.")
-                            return
+            pending_result = self._handle_pending_input(line, event.input)
+            if pending_result is None:
+                return
+            cmd, args = pending_result
 
-                    parts = shlex.split(line)
-                    cmd = _normalize_cmd(parts[0])
-                    args = parts[1:]
-
-                    if cmd not in self._commands and not args and line.startswith(("http://", "https://")):
-                        if _maybe_add_url_as_source(self.store, n, line.strip(), self._log):
-                            return
-
-                    if cmd == "set-nsec" and not args:
-                        self._pending_secret = True
-                        event.input.password = True
-                        event.input.placeholder = "Enter nsec:"
-                        self._log("Enter nsec:")
-                        return
-
-                    if cmd == "/":
-                        self._show_palette(True)
-                        self._update_palette("/")
-                        return
-
-                    arg_prompts = _interactive_arg_prompts()
-                    if cmd in arg_prompts and len(args) < len(arg_prompts[cmd]):
-                        self._pending_cmd = cmd
-                        self._pending_args = args
-                        self._pending_prompts = [(p, False) for p in arg_prompts[cmd][len(args):]]
-                        self._prompt_next_pending(event.input)
-                        return
-                    if cmd == "edit-source" and len(args) < 1:
-                        self._pending_cmd = cmd
-                        self._pending_args = args
-                        prompts = [("Source id", False)]
-                        self._pending_prompts = prompts[len(args):]
-                        self._prompt_next_pending(event.input)
-                        return
-                    if cmd == "set-rate" and len(args) < 3:
-                        self._pending_cmd = cmd
-                        self._pending_args = args
-                        prompts = [
-                            ("Min interval seconds", False),
-                            ("Max posts per hour", False),
-                            ("Max posts per day per source", False),
-                        ]
-                        self._pending_prompts = prompts[len(args):]
-                        self._prompt_next_pending(event.input)
-                        return
-                    if cmd == "resync-source" and len(args) < 1:
-                        self._pending_cmd = cmd
-                        self._pending_args = args
-                        prompts = [("Source id", False)]
-                        self._pending_prompts = prompts[len(args):]
-                        self._prompt_next_pending(event.input)
-                        return
-                    if cmd == "repair-db":
-                        repair_db(self.store, n, self._log)
-                        return
-                    if cmd == "retry-failed":
-                        if not args:
-                            self._pending_cmd = cmd
-                            self._pending_args = args
-                            prompts = [("Source id (blank for all)", True)]
-                            self._pending_prompts = prompts[len(args):]
-                            self._prompt_next_pending(event.input)
-                            return
+            if cmd is None:
+                new_result = self._handle_new_command_input(line, event.input)
+                if new_result is None:
+                    return
+                cmd, args = new_result
 
             should_quit = _dispatch_command(self.store, n, db_path, cmd, args, self._log)
             if should_quit:
                 self.action_quit()
+
+        def _handle_pending_input(self, line: str, inp: Input) -> Optional[tuple[Optional[str], list[str]]]:
+            if self._pending_secret:
+                self._pending_secret = False
+                inp.password = False
+                inp.placeholder = "Type / for commands"
+                return "set-nsec", [line]
+            if not self._pending_cmd:
+                return None, []
+            if line.lower() in ("cancel", "exit"):
+                self._reset_pending(inp, canceled=True)
+                return None
+            if not line and not self._pending_allow_blank:
+                self._reset_pending(inp, canceled=True)
+                return None
+            self._pending_args.append(line)
+            if self._pending_prompts:
+                self._prompt_next_pending(inp)
+                return None
+            cmd = self._pending_cmd
+            args = self._pending_args
+            if cmd == "edit-source":
+                if len(args) == 1 and not self._pending_edit_choice:
+                    self._pending_prompts = [("Change what? (channel/rss/both)", False)]
+                    self._prompt_next_pending(inp)
+                    return None
+                if self._pending_edit_choice == "":
+                    self._pending_edit_choice = args[1].strip().lower() if len(args) > 1 else ""
+                    if self._pending_edit_choice not in ("channel", "rss", "both"):
+                        self._log("Choose: channel, rss, or both.")
+                        self._pending_args = [args[0]]
+                        self._pending_prompts = [("Change what? (channel/rss/both)", False)]
+                        self._prompt_next_pending(inp)
+                        return None
+                    prompts = []
+                    if self._pending_edit_choice in ("channel", "both"):
+                        prompts.append(("Channel URL (blank to skip, 'none' to clear)", True))
+                    if self._pending_edit_choice in ("rss", "both"):
+                        prompts.append(("RSS URL (blank to skip, 'none' to clear)", True))
+                    self._pending_prompts = prompts
+                    self._pending_args = [args[0], self._pending_edit_choice]
+                    self._prompt_next_pending(inp)
+                    return None
+                source_id = args[0] if len(args) > 0 else ""
+                choice = args[1] if len(args) > 1 else ""
+                channel_url = None
+                rss_url = None
+                cursor = 2
+                if choice in ("channel", "both"):
+                    channel_url = args[cursor] if len(args) > cursor and args[cursor] else None
+                    cursor += 1
+                if choice in ("rss", "both"):
+                    rss_url = args[cursor] if len(args) > cursor and args[cursor] else None
+                _apply_edit_source(self.store, n, source_id, channel_url, rss_url, self._log)
+                self._reset_pending(inp)
+                return None
+            if cmd == "add-channel":
+                self._wiz_add_channel(args[0] if args else "")
+                self._reset_pending(inp)
+                return None
+            if cmd == "add-rss":
+                if not _maybe_add_url_as_source(self.store, n, args[0] if args else "", self._log):
+                    self._log("Invalid RSS URL.")
+                self._reset_pending(inp)
+                return None
+            if cmd == "add-source":
+                self._wiz_add_source(args[0] if args else "")
+                self._reset_pending(inp)
+                return None
+            if cmd == "set-rate":
+                min_int = args[0] if len(args) > 0 else ""
+                max_per = args[1] if len(args) > 1 else ""
+                max_day = args[2] if len(args) > 2 else ""
+                parsed = _parse_set_rate_args(
+                    ([f"--min-interval-seconds={min_int}"] if min_int else [])
+                    + ([f"--max-posts-per-hour={max_per}"] if max_per else [])
+                    + ([f"--max-posts-per-day-per-source={max_day}"] if max_day else [])
+                )
+                if isinstance(parsed, str):
+                    self._log(parsed)
+                else:
+                    if parsed.min_interval_seconds is not None:
+                        self.store.set_setting("min_publish_interval_seconds", str(int(parsed.min_interval_seconds)))
+                    if parsed.max_posts_per_hour is not None:
+                        self.store.set_setting("max_posts_per_hour", str(int(parsed.max_posts_per_hour)))
+                    if parsed.max_posts_per_day_per_source is not None:
+                        self.store.set_setting(
+                            "max_posts_per_day_per_source",
+                            str(int(parsed.max_posts_per_day_per_source)),
+                        )
+                    min_interval, max_per_hour = self.store.get_publish_limits()
+                    max_per_day_per_source = self.store.get_daily_source_limit()
+                    self._log(
+                        "Rate limits: "
+                        f"min_interval_seconds={min_interval}, "
+                        f"max_posts_per_hour={max_per_hour}, "
+                        f"max_posts_per_day_per_source={max_per_day_per_source}"
+                    )
+                self._reset_pending(inp)
+                return None
+            if cmd == "resync-source":
+                source_id = args[0] if args else ""
+                if not source_id:
+                    self._log("Canceled.")
+                else:
+                    _resync_source(self.store, n, int(source_id), self._log)
+                self._reset_pending(inp)
+                return None
+            if cmd == "retry-failed":
+                if args:
+                    count = self.store.retry_failed_for_source(int(args[0]), older_than_seconds=0)
+                    self._log(f"Re-queued failed items for source {args[0]}: {count}")
+                else:
+                    count = self.store.retry_failed(older_than_seconds=0)
+                    self._log(f"Re-queued failed items: {count}")
+                self._reset_pending(inp)
+                return None
+            self._reset_pending(inp)
+            return cmd, args
+
+        def _handle_new_command_input(self, line: str, inp: Input) -> Optional[tuple[str, list[str]]]:
+            if line.startswith(("http://", "https://")) and self._last_prompt:
+                lp = self._last_prompt.lower()
+                if "channel or rss" in lp:
+                    self._wiz_add_source(line)
+                    return None
+                if "channel url" in lp:
+                    self._wiz_add_channel(line)
+                    return None
+                if "rss url" in lp:
+                    if not _maybe_add_url_as_source(self.store, n, line, self._log):
+                        self._log("Invalid RSS URL.")
+                    return None
+
+            parts = shlex.split(line)
+            cmd = _normalize_cmd(parts[0])
+            args = parts[1:]
+
+            if cmd not in self._commands and not args and line.startswith(("http://", "https://")):
+                if _maybe_add_url_as_source(self.store, n, line.strip(), self._log):
+                    return None
+
+            if cmd == "set-nsec" and not args:
+                self._pending_secret = True
+                inp.password = True
+                inp.placeholder = "Enter nsec:"
+                self._log("Enter nsec:")
+                return None
+
+            if cmd == "/":
+                self._show_palette(True)
+                self._update_palette("/")
+                return None
+
+            arg_prompts = _interactive_arg_prompts()
+            if cmd in arg_prompts and len(args) < len(arg_prompts[cmd]):
+                self._pending_cmd = cmd
+                self._pending_args = args
+                self._pending_prompts = [(p, False) for p in arg_prompts[cmd][len(args):]]
+                self._prompt_next_pending(inp)
+                return None
+            if cmd == "edit-source" and len(args) < 1:
+                self._pending_cmd = cmd
+                self._pending_args = args
+                prompts = [("Source id", False)]
+                self._pending_prompts = prompts[len(args):]
+                self._prompt_next_pending(inp)
+                return None
+            if cmd == "set-rate" and len(args) < 3:
+                self._pending_cmd = cmd
+                self._pending_args = args
+                prompts = [
+                    ("Min interval seconds", False),
+                    ("Max posts per hour", False),
+                    ("Max posts per day per source", False),
+                ]
+                self._pending_prompts = prompts[len(args):]
+                self._prompt_next_pending(inp)
+                return None
+            if cmd == "resync-source" and len(args) < 1:
+                self._pending_cmd = cmd
+                self._pending_args = args
+                prompts = [("Source id", False)]
+                self._pending_prompts = prompts[len(args):]
+                self._prompt_next_pending(inp)
+                return None
+            if cmd == "repair-db":
+                repair_db(self.store, n, self._log)
+                return None
+            if cmd == "retry-failed" and not args:
+                self._pending_cmd = cmd
+                self._pending_args = args
+                prompts = [("Source id (blank for all)", True)]
+                self._pending_prompts = prompts[len(args):]
+                self._prompt_next_pending(inp)
+                return None
+
+            return cmd, args
 
         def on_list_view_selected(self, event: ListView.Selected) -> None:
             if not self._palette_visible:

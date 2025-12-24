@@ -1,0 +1,6 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+requests==2.31.0
+feedparser==6.0.11
+pynostr==0.3.5
+python-multipart==0.0.6
