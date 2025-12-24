@@ -21,7 +21,7 @@ export const useAppStore = defineStore('app', {
     relays: [],
     queue: [],
     loading: false,
-    setupComplete: true,
+    setupComplete: false,
     apiKey: localStorage.getItem('api_key') || ''
   }),
   actions: {

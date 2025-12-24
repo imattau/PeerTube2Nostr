@@ -13,7 +13,7 @@ describe('App Store', () => {
 
   it('initializes with default values', () => {
     const store = useAppStore()
-    expect(store.setupComplete).toBe(true)
+    expect(store.setupComplete).toBe(false)
     expect(store.logs).toEqual([])
     expect(store.apiKey).toBe('')
   })
