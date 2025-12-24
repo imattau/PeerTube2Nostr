@@ -33,7 +33,26 @@ PeerTube2Nostr ingests videos from PeerTube channels using the PeerTube API as t
    * inserts new videos into the DB
    * publishes one pending video per cycle
 
-## Installation
+## Web Dashboard (New!)
+
+The project now includes a modern, mobile-first Web Dashboard for easier management.
+
+### Features
+* **Visual Dashboard**: Real-time stats and visual pending queue with thumbnails.
+* **Relay Monitoring**: Live health and latency tracking for your relays.
+* **Onboarding Wizard**: Automated first-run setup and security key generation.
+* **Security**: API Key protection and secure NSEC/Bunker configuration.
+
+### Getting Started with the Web Dashboard
+Navigate to the `webapp` directory and use Docker Compose:
+
+```bash
+cd webapp
+docker compose up --build -d
+```
+Access the dashboard at `http://localhost:3000`. Check the [Webapp README](./webapp/README.md) for detailed instructions.
+
+## Installation (CLI)
 
 Python 3.10+ recommended.
 

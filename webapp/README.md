@@ -1,4 +1,4 @@
-# PeerTube2Nostr Web Dashboard ?öÄ
+# PeerTube2Nostr Web Dashboard ?ÔøΩÔøΩ
 
 A modular, cutting-edge, mobile-first full-stack web application designed to manage the publishing of PeerTube videos to the Nostr network. This application replaces the legacy CLI with a professional management suite.
 
@@ -9,16 +9,16 @@ A modular, cutting-edge, mobile-first full-stack web application designed to man
 
 ## ‚ú® Features
 
-- **?ì± Mobile-First Design**: Fully responsive dark-themed UI built with Vue 3 and Tailwind CSS.
-- **?ìä Rich Dashboard**: Real-time stats, visual pending queue with thumbnails, and system logs.
-- **?õ† Modular Backend**: Clean separation of concerns (Database, PeerTube API, Nostr, Background Runner).
-- **?ì° Relay Health**: Real-time latency monitoring for all configured Nostr relays.
-- **?îí Security**: API Key protection and secure local storage for credentials.
-- **‚öôÔ∏? Background Runner**: Automated polling and rate-limited publishing.
+- **?ÔøΩÔøΩ Mobile-First Design**: Fully responsive dark-themed UI built with Vue 3 and Tailwind CSS.
+- **?ÔøΩÔøΩ Rich Dashboard**: Real-time stats, visual pending queue with thumbnails, and system logs.
+- **?ÔøΩÔøΩ Modular Backend**: Clean separation of concerns (Database, PeerTube API, Nostr, Background Runner).
+- **?ÔøΩÔøΩ Relay Health**: Real-time latency monitoring for all configured Nostr relays.
+- **?ÔøΩÔøΩ Security**: API Key protection and secure local storage for credentials.
+- **‚öôÔøΩ? Background Runner**: Automated polling and rate-limited publishing.
 
 ---
 
-## ?èó Architecture
+## ?ÔøΩÔøΩ Architecture
 
 - **Frontend**: Vue 3 (Composition API), Vite, Pinia (State), Axios, Lucide Icons.
 - **Backend**: FastAPI (Python 3.11), Uvicorn, SQLite (WAL Mode).
@@ -26,7 +26,7 @@ A modular, cutting-edge, mobile-first full-stack web application designed to man
 
 ---
 
-## ?öÄ Installation & Setup
+## ?ÔøΩÔøΩ Installation & Setup
 
 ### Option 1: Docker (Recommended)
 
@@ -48,7 +48,7 @@ A modular, cutting-edge, mobile-first full-stack web application designed to man
 3. **Launch**:
    
    ```bash
-   docker-compose up --build -d
+   docker compose up --build -d
    ```
    
    The dashboard will be available at `http://localhost:3000`.
@@ -76,7 +76,7 @@ npm run dev
 
 ---
 
-## ?ìñ Usage Guide
+## ?ÔøΩÔøΩ Usage Guide
 
 ### 1. Initial Setup
 
@@ -100,7 +100,7 @@ npm run dev
 
 ---
 
-## ?õ° Security Note
+## ?ÔøΩÔøΩ Security Note
 
 - **API Security**: The `X-API-Key` header is required for all state-changing operations if an `API_KEY` is configured in the environment.
 - **Local Storage**: Your API Key is stored in your browser's local storage for convenience.
@@ -108,7 +108,7 @@ npm run dev
 
 ---
 
-## ?õ† Troubleshooting
+## ?ÔøΩÔøΩ Troubleshooting
 
 - **Logs**: Check the "System Logs" section at the bottom of the dashboard for real-time error reporting.
 - **CORS Issues**: Ensure the frontend port (default 3000) is allowed in the backend's middleware configuration.
