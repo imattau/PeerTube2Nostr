@@ -14,17 +14,17 @@ import {
   Square,
   AlertCircle,
   LayoutDashboard,
-  Settings as SettingsIcon,
   ShieldCheck,
   Zap,
   Terminal,
-  Clock,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  Info
 } from 'lucide-vue-next'
 
 const store = useAppStore()
 const activeTab = ref('dashboard')
+const showSetupBanner = ref(true)
 
 const modal = reactive({
   show: false,
@@ -82,180 +82,125 @@ const promptKey = () => {
 
 const formatTs = (ts: number | null) => {
   if (!ts) return '-'
-  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#0a0a0a] text-slate-300 font-sans antialiased flex">
+  <div class="min-h-screen bg-[#050505] text-slate-300 font-sans antialiased pb-20">
     
-    <!-- Sidebar -->
-    <nav class="w-64 border-r border-white/5 bg-[#0f0f0f] hidden lg:flex flex-col shrink-0">
-      <div class="p-6 border-b border-white/5 flex items-center gap-3">
-        <div class="bg-indigo-600 p-1.5 rounded shadow-lg shadow-indigo-600/20">
-          <Zap class="w-5 h-5 text-white fill-white" />
+    <!-- API Key Onboarding Banner -->
+    <div v-if="!store.apiKey && showSetupBanner" class="bg-indigo-600/10 border-b border-indigo-500/20 px-4 py-2">
+      <div class="max-w-[1100px] mx-auto flex items-center justify-between">
+        <div class="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-tighter">
+          <Info class="w-3.5 h-3.5" />
+          API Access Required for data updates
         </div>
-        <span class="font-bold text-white tracking-tight">PeerTube2Nostr</span>
-      </div>
-
-      <div class="flex-1 p-4 space-y-1">
-        <button v-for="item in [
-          { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
-          { id: 'sources', icon: Rss, label: 'Sources' },
-          { id: 'relays', icon: Database, label: 'Relays' },
-          { id: 'settings', icon: SettingsIcon, label: 'Settings' }
-        ]" :key="item.id" 
-        @click="activeTab = item.id"
-        :class="[
-          'w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-          activeTab === item.id ? 'bg-white/5 text-white' : 'text-slate-500 hover:text-slate-200 hover:bg-white/[0.02]'
-        ]">
-          <component :is="item.icon" class="w-4 h-4" />
-          {{ item.label }}
-        </button>
-      </div>
-
-      <div class="p-4 border-t border-white/5">
-        <button @click="promptKey" class="flex items-center gap-3 px-3 py-2 text-slate-500 hover:text-slate-200 transition-colors w-full text-sm">
-          <Key class="w-4 h-4" />
-          <span>Security Key</span>
-        </button>
-      </div>
-    </nav>
-
-    <!-- Main Content -->
-    <div class="flex-1 flex flex-col min-w-0">
-      
-      <!-- Top Bar -->
-      <header class="h-16 border-b border-white/5 bg-[#0f0f0f]/50 backdrop-blur flex items-center justify-between px-8 sticky top-0 z-30">
-        <h2 class="text-sm font-semibold text-white capitalize">{{ activeTab }}</h2>
-        
         <div class="flex items-center gap-4">
-          <div class="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-md">
-            <div :class="['w-1.5 h-1.5 rounded-full', store.metrics.status === 'idle' ? 'bg-emerald-500' : 'bg-blue-500 animate-pulse']"></div>
-            <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">{{ store.metrics.status || 'Offline' }}</span>
+          <button @click="promptKey" class="text-[10px] font-black text-white bg-indigo-600 px-3 py-1 rounded hover:bg-indigo-500 transition-colors">ENTER KEY</button>
+          <button @click="showSetupBanner = false" class="text-indigo-400 hover:text-white transition-colors"><XCircle class="w-4 h-4" /></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Centralized Container -->
+    <div class="max-w-[1100px] mx-auto px-6 py-8">
+      
+      <!-- Operational Header -->
+      <header class="flex items-center justify-between mb-8 border-b border-white/[0.05] pb-6">
+        <div class="flex items-center gap-4">
+          <div class="bg-indigo-600 p-1.5 rounded">
+            <Zap class="w-5 h-5 text-white fill-white" />
           </div>
-          
-          <div class="flex items-center border border-white/10 rounded-md overflow-hidden bg-white/5">
-            <button @click="store.startRunner" :disabled="store.metrics.status !== 'stopped'"
-              class="p-2 hover:bg-white/5 disabled:opacity-30 transition-colors border-r border-white/10">
+          <div>
+            <h1 class="text-lg font-bold text-white tracking-tight">PeerTube2Nostr</h1>
+            <p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Control Panel</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 px-2.5 py-1 bg-white/[0.03] rounded border border-white/[0.05]">
+            <div :class="['w-1.5 h-1.5 rounded-full', store.metrics.status === 'idle' ? 'bg-emerald-500' : 'bg-blue-500 animate-pulse']"></div>
+            <span class="text-[10px] font-black uppercase text-slate-400">{{ store.metrics.status || 'OFFLINE' }}</span>
+          </div>
+          <div class="flex bg-white/[0.03] rounded border border-white/[0.05] overflow-hidden">
+            <button @click="store.startRunner" :disabled="store.metrics.status !== 'stopped'" class="p-1.5 hover:bg-white/5 disabled:opacity-20 transition-colors">
               <Play class="w-3.5 h-3.5 text-emerald-500 fill-emerald-500" />
             </button>
-            <button @click="store.stopRunner" :disabled="store.metrics.status === 'stopped'"
-              class="p-2 hover:bg-white/5 disabled:opacity-30 transition-colors">
+            <button @click="store.stopRunner" :disabled="store.metrics.status === 'stopped'" class="p-1.5 hover:bg-white/5 disabled:opacity-20 transition-colors border-l border-white/[0.05]">
               <Square class="w-3.5 h-3.5 text-red-500 fill-red-500" />
             </button>
           </div>
         </div>
       </header>
 
-      <main class="flex-1 overflow-y-auto">
-        <div class="max-w-[1200px] mx-auto p-8 space-y-8">
-          
-          <!-- DASHBOARD -->
-          <div v-if="activeTab === 'dashboard'" class="space-y-8 animate-in fade-in duration-500">
-            
-            <!-- Summary Stats -->
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div v-for="(val, label) in { 'Queue': store.metrics.pending, 'Published': store.metrics.posted, 'Failed': store.metrics.failed, 'Sources': store.metrics.sources }" :key="label"
-                class="bg-[#141414] border border-white/5 p-5 rounded-lg">
-                <p class="text-[11px] font-bold text-slate-500 uppercase tracking-widest">{{ label }}</p>
-                <p class="text-2xl font-semibold text-white mt-1">{{ val ?? 0 }}</p>
-              </div>
-            </div>
-
-            <!-- Queue & Activity Container -->
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              
-              <!-- Pending Queue (Table-like) -->
-              <div class="lg:col-span-2 space-y-4">
-                <div class="flex items-center justify-between">
-                  <h3 class="text-sm font-bold text-white uppercase tracking-tight flex items-center gap-2">
-                    <Clock class="w-4 h-4 text-slate-500" />
-                    Pending Queue
-                  </h3>
-                  <span class="text-[10px] text-slate-500 font-medium">{{ store.queue.length }} items</span>
-                </div>
-
-                <div class="bg-[#141414] border border-white/5 rounded-lg overflow-hidden">
-                  <div v-if="store.queue.length > 0" class="divide-y border-white/5 divide-white/5">
-                    <div v-for="item in store.queue" :key="item.id" class="p-4 flex items-center gap-4 hover:bg-white/[0.02] transition-colors group">
-                      <div class="w-24 aspect-video rounded overflow-hidden bg-slate-800 shrink-0 border border-white/5">
-                        <img v-if="item.thumbnail_url" :src="item.thumbnail_url" class="w-full h-full object-cover" />
-                        <div v-else class="w-full h-full flex items-center justify-center"><Play class="w-4 h-4 text-slate-600" /></div>
-                      </div>
-                      <div class="flex-1 min-w-0">
-                        <p class="text-[10px] text-indigo-400 font-bold uppercase tracking-tight truncate">{{ item.channel_name }}</p>
-                        <h4 class="text-xs font-semibold text-slate-200 truncate mt-0.5">{{ item.title || item.watch_url }}</h4>
-                      </div>
-                      <a :href="item.watch_url" target="_blank" class="p-2 text-slate-600 hover:text-slate-300 opacity-0 group-hover:opacity-100 transition-all">
-                        <ExternalLink class="w-4 h-4" />
-                      </a>
-                    </div>
-                  </div>
-                  <div v-else class="py-12 text-center">
-                    <p class="text-xs text-slate-500 font-medium">No items currently in queue</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- System Activity (Monospace) -->
-              <div class="space-y-4">
-                <h3 class="text-sm font-bold text-white uppercase tracking-tight flex items-center gap-2">
-                  <Terminal class="w-4 h-4 text-slate-500" />
-                  Activity
-                </h3>
-                <div class="bg-black border border-white/5 rounded-lg p-4 font-mono text-[11px] h-[400px] overflow-y-auto custom-scrollbar flex flex-col-reverse divide-y divide-white/5">
-                  <div v-for="(log, i) in store.logs.slice().reverse()" :key="i" class="py-2 first:pt-0 last:pb-0 text-slate-400">
-                    <span class="text-slate-600 mr-2">[{{ store.logs.length - i }}]</span>
-                    {{ log }}
-                  </div>
-                </div>
-              </div>
-            </div>
+      <!-- Dashboard Grid -->
+      <div v-if="activeTab === 'dashboard'" class="grid grid-cols-1 md:grid-cols-12 gap-6 animate-in fade-in duration-500">
+        
+        <!-- Top Metrics (4-wide) -->
+        <div class="md:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+          <div v-for="(val, label) in { 'Queue': store.metrics.pending, 'Published': store.metrics.posted, 'Failed': store.metrics.failed, 'Sources': store.metrics.sources }" :key="label"
+            class="bg-white/[0.02] p-4 rounded-md">
+            <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{{ label }}</p>
+            <p class="text-xl font-bold text-white mt-0.5">{{ val ?? 0 }}</p>
           </div>
+        </div>
 
-          <!-- SOURCES -->
-          <div v-if="activeTab === 'sources'" class="space-y-6 animate-in fade-in duration-500">
-            <div class="flex justify-between items-center border-b border-white/5 pb-4">
-              <h3 class="text-lg font-semibold text-white">Configured Sources</h3>
-              <button @click="addSource" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded transition-colors flex items-center gap-2">
-                <PlusCircle class="w-3.5 h-3.5" /> Add Source
+        <!-- Primary Column -->
+        <div class="md:col-span-8 space-y-6">
+          
+          <!-- Compact Queue -->
+          <section>
+            <h3 class="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <LayoutDashboard class="w-3.5 h-3.5" /> Pending Queue
+            </h3>
+            <div class="bg-white/[0.02] rounded border border-white/[0.03] overflow-hidden">
+              <div v-if="store.queue.length > 0" class="divide-y divide-white/[0.03]">
+                <div v-for="item in store.queue" :key="item.id" class="p-3 flex items-center gap-4 hover:bg-white/[0.01] group">
+                  <div class="w-16 aspect-video rounded-sm overflow-hidden bg-slate-900 shrink-0 border border-white/5">
+                    <img v-if="item.thumbnail_url" :src="item.thumbnail_url" class="w-full h-full object-cover grayscale-[0.3] group-hover:grayscale-0 transition-all" />
+                    <div v-else class="w-full h-full flex items-center justify-center"><Play class="w-3 h-3 text-slate-700" /></div>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-[9px] text-indigo-400 font-bold uppercase">{{ item.channel_name }}</p>
+                    <h4 class="text-xs font-medium text-slate-200 truncate">{{ item.title || item.watch_url }}</h4>
+                  </div>
+                  <a :href="item.watch_url" target="_blank" class="p-1.5 text-slate-600 hover:text-white transition-colors">
+                    <ExternalLink class="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+              <div v-else class="h-24 flex flex-col items-center justify-center gap-1">
+                <CheckCircle2 class="w-4 h-4 text-slate-700" />
+                <p class="text-[10px] text-slate-600 font-bold uppercase tracking-tight">Queue is clean</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Source Management (Simplified Table) -->
+          <section>
+            <div class="flex justify-between items-center mb-3">
+              <h3 class="text-[11px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                <Rss class="w-3.5 h-3.5" /> Active Channels
+              </h3>
+              <button @click="addSource" class="text-indigo-400 hover:text-white text-[10px] font-black uppercase transition-colors flex items-center gap-1.5">
+                <PlusCircle class="w-3 h-3" /> Add Source
               </button>
             </div>
-            
-            <div class="bg-[#141414] border border-white/5 rounded-lg overflow-hidden">
-              <table class="w-full text-left text-xs border-collapse">
-                <thead class="bg-white/5 text-slate-500 font-bold uppercase tracking-wider border-b border-white/5">
-                  <tr>
-                    <th class="px-6 py-3 font-bold">Source ID</th>
-                    <th class="px-6 py-3 font-bold">URL / Channel</th>
-                    <th class="px-6 py-3 font-bold">Last Polled</th>
-                    <th class="px-6 py-3 font-bold">Status</th>
-                    <th class="px-6 py-3 text-right font-bold">Actions</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-white/5">
-                  <tr v-for="source in store.sources" :key="source.id" class="hover:bg-white/[0.01] group">
-                    <td class="px-6 py-4 text-slate-500 font-mono">{{ source.id }}</td>
-                    <td class="px-6 py-4">
-                      <div class="font-semibold text-slate-200 max-w-[300px] truncate">{{ source.api_channel_url || source.rss_url }}</div>
+            <div class="bg-white/[0.02] rounded border border-white/[0.03] overflow-hidden">
+              <table class="w-full text-left text-xs">
+                <tbody class="divide-y divide-white/[0.03]">
+                  <tr v-for="source in store.sources" :key="source.id" class="hover:bg-white/[0.01]">
+                    <td class="px-4 py-3 min-w-0">
+                      <div class="font-bold text-slate-200 truncate max-w-[250px]">{{ source.api_channel_url || source.rss_url }}</div>
+                      <div class="text-[9px] text-slate-600 uppercase font-black mt-0.5">Polled: {{ formatTs(source.last_polled_ts) }}</div>
                     </td>
-                    <td class="px-6 py-4 text-slate-400">{{ formatTs(source.last_polled_ts) }}</td>
-                    <td class="px-6 py-4">
-                      <span v-if="source.enabled" class="text-emerald-500 font-bold flex items-center gap-1.5 uppercase text-[10px]">
-                        <CheckCircle2 class="w-3 h-3" /> Enabled
-                      </span>
-                      <span v-else class="text-slate-600 font-bold flex items-center gap-1.5 uppercase text-[10px]">
-                        <XCircle class="w-3 h-3" /> Disabled
-                      </span>
-                    </td>
-                    <td class="px-6 py-4 text-right">
-                      <div class="flex items-center justify-end gap-2">
-                        <button @click="store.toggleSource(source.id, !source.enabled)" class="p-1.5 hover:bg-white/5 rounded transition-colors text-slate-500 hover:text-white">
+                    <td class="px-4 py-3 text-right">
+                      <div class="flex items-center justify-end gap-1">
+                        <button @click="store.toggleSource(source.id, !source.enabled)" :class="source.enabled ? 'text-emerald-500' : 'text-slate-600'" class="p-1.5 hover:bg-white/5 rounded">
                           <RefreshCw class="w-3.5 h-3.5" />
                         </button>
-                        <button @click="store.deleteSource(source.id)" class="p-1.5 hover:bg-red-500/10 rounded transition-colors text-slate-500 hover:text-red-500">
+                        <button @click="store.deleteSource(source.id)" class="p-1.5 hover:bg-red-500/10 text-slate-600 hover:text-red-500 rounded">
                           <Trash2 class="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -264,119 +209,109 @@ const formatTs = (ts: number | null) => {
                 </tbody>
               </table>
             </div>
-          </div>
+          </section>
+        </div>
 
-          <!-- RELAYS -->
-          <div v-if="activeTab === 'relays'" class="space-y-6 animate-in fade-in duration-500">
-            <div class="flex justify-between items-center border-b border-white/5 pb-4">
-              <h3 class="text-lg font-semibold text-white">Nostr Relays</h3>
-              <button @click="addRelay" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-4 py-2 rounded transition-colors flex items-center gap-2">
-                <PlusCircle class="w-3.5 h-3.5" /> Add Relay
+        <!-- Secondary Column -->
+        <div class="md:col-span-4 space-y-6">
+          
+          <!-- Relay Health -->
+          <section>
+            <div class="flex justify-between items-center mb-3">
+              <h3 class="text-[11px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                <Database class="w-3.5 h-3.5" /> Relays
+              </h3>
+              <button @click="addRelay" class="text-indigo-400 hover:text-white transition-colors"><PlusCircle class="w-3.5 h-3.5" /></button>
+            </div>
+            <div class="space-y-2">
+              <div v-for="relay in store.relays" :key="relay.id" class="bg-white/[0.02] p-3 rounded flex items-center justify-between group border border-white/[0.03]">
+                <div class="min-w-0 flex-1">
+                  <p class="text-xs font-bold text-slate-300 truncate">{{ relay.relay_url.replace('wss://', '') }}</p>
+                  <span v-if="relay.latency_ms" class="text-[9px] text-indigo-500 font-black uppercase">{{ relay.latency_ms }}ms latency</span>
+                </div>
+                <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button @click="store.toggleRelay(relay.id, !relay.enabled)" :class="relay.enabled ? 'text-emerald-500' : 'text-slate-600'" class="p-1 hover:bg-white/5 rounded"><CheckCircle2 class="w-3.5 h-3.5" /></button>
+                  <button @click="store.deleteRelay(relay.id)" class="p-1 text-slate-600 hover:text-red-500 rounded"><Trash2 class="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- System Activity (Monospace) -->
+          <section>
+            <h3 class="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <Terminal class="w-3.5 h-3.5" /> Activity
+            </h3>
+            <div class="bg-black/50 rounded p-3 font-mono text-[10px] h-[300px] overflow-y-auto custom-scrollbar border border-white/[0.03]">
+              <div v-for="(log, i) in store.logs.slice().reverse()" :key="i" class="py-1 text-slate-500 leading-relaxed border-b border-white/[0.02] last:border-0">
+                <span class="text-indigo-500/40 mr-1.5">[{{ store.logs.length - i }}]</span>{{ log }}
+              </div>
+            </div>
+          </section>
+
+          <!-- Configuration & Auth -->
+          <section class="pt-4 border-t border-white/[0.05]">
+            <div class="flex flex-col gap-2">
+              <button @click="setNsec" class="w-full bg-white/[0.03] hover:bg-white/[0.06] text-slate-300 py-2.5 rounded text-[10px] font-black uppercase tracking-widest transition-colors flex items-center justify-center gap-2">
+                <ShieldCheck class="w-3.5 h-3.5 text-emerald-500" v-if="store.metrics.has_nsec" />
+                <Key class="w-3.5 h-3.5 text-indigo-500" v-else />
+                Update NSEC
+              </button>
+              <button @click="promptKey" class="w-full bg-white/[0.03] hover:bg-white/[0.06] text-slate-500 py-2.5 rounded text-[10px] font-black uppercase tracking-widest transition-colors">
+                Change API Key
               </button>
             </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div v-for="relay in store.relays" :key="relay.id" class="bg-[#141414] border border-white/5 p-5 rounded-lg flex items-center justify-between group">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-3">
-                    <span class="font-semibold text-slate-200 truncate">{{ relay.relay_url }}</span>
-                    <span v-if="relay.latency_ms" class="text-[10px] bg-indigo-500/10 text-indigo-400 font-bold px-1.5 py-0.5 rounded border border-indigo-500/20">
-                      {{ relay.latency_ms }}ms
-                    </span>
-                  </div>
-                  <p class="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-tight">Relay Node</p>
-                </div>
-                <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button @click="store.toggleRelay(relay.id, !relay.enabled)" :class="relay.enabled ? 'text-emerald-500' : 'text-slate-600'" class="p-2 hover:bg-white/5 rounded">
-                    <CheckCircle2 class="w-4 h-4" />
-                  </button>
-                  <button @click="store.deleteRelay(relay.id)" class="p-2 hover:bg-red-500/10 rounded text-slate-600 hover:text-red-500">
-                    <Trash2 class="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- SETTINGS -->
-          <div v-if="activeTab === 'settings'" class="max-w-xl animate-in fade-in duration-500 space-y-8">
-            <section class="space-y-4">
-              <h3 class="text-sm font-bold text-white uppercase tracking-tight">Identity & Signing</h3>
-              <div class="bg-[#141414] border border-white/5 p-6 rounded-lg space-y-6">
-                <div v-if="store.metrics.has_nsec" class="flex items-center justify-between p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-md">
-                  <div class="flex items-center gap-3">
-                    <ShieldCheck class="w-5 h-5 text-emerald-500" />
-                    <div>
-                      <p class="text-xs font-bold text-emerald-500 uppercase tracking-wider">Secure Signing Active</p>
-                      <p class="text-[11px] text-emerald-500/60 font-medium">NSEC is configured and encrypted on server</p>
-                    </div>
-                  </div>
-                  <button @click="setNsec" class="text-[10px] font-bold text-emerald-500 hover:underline underline-offset-4 uppercase tracking-widest">Update</button>
-                </div>
-                <div v-else>
-                  <button @click="setNsec" class="w-full bg-indigo-600 py-3 rounded text-xs font-bold text-white uppercase tracking-[0.1em]">Configure Private Key</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="space-y-4 pt-4 border-t border-white/5">
-              <h3 class="text-sm font-bold text-white uppercase tracking-tight text-red-500/80">Maintenance</h3>
-              <div class="grid grid-cols-2 gap-4">
-                <button class="bg-[#141414] hover:bg-white/5 border border-white/5 py-3 rounded text-[10px] font-bold uppercase tracking-widest transition-colors">Repair DB</button>
-                <button class="bg-[#141414] hover:bg-red-500/10 border border-white/5 py-3 rounded text-[10px] font-bold uppercase tracking-widest text-red-500 transition-colors">Clear History</button>
-              </div>
-            </section>
-          </div>
-
+          </section>
         </div>
-      </main>
+
+      </div>
     </div>
 
-    <!-- Modal -->
-    <div v-if="modal.show" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div class="bg-[#141414] border border-white/10 w-full max-w-md rounded-lg shadow-2xl p-8">
-        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-1">{{ modal.title }}</h3>
-        <p class="text-xs text-slate-500 mb-6 font-medium">{{ modal.label }}</p>
+    <!-- Standard Minimal Modal -->
+    <div v-if="modal.show" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm animate-in fade-in duration-200">
+      <div class="bg-[#0f0f0f] border border-white/10 w-full max-w-sm rounded shadow-2xl p-6">
+        <h3 class="text-xs font-black text-white uppercase tracking-widest mb-1">{{ modal.title }}</h3>
+        <p class="text-[10px] text-slate-500 mb-4 font-bold uppercase">{{ modal.label }}</p>
         
         <input v-model="modal.value" @keyup.enter="handleModalSubmit" autofocus
-          class="w-full bg-black border border-white/10 rounded-md px-4 py-2.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-sm mb-4" />
+          class="w-full bg-black border border-white/10 rounded px-3 py-2 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-xs mb-4" />
         
-        <div v-if="modal.error" class="flex items-center gap-2 text-red-400 text-[11px] mb-6 font-bold uppercase tracking-tight">
-          <AlertCircle class="w-3.5 h-3.5" />
-          {{ modal.error }}
+        <div v-if="modal.error" class="flex items-center gap-2 text-red-500 text-[9px] mb-4 font-black uppercase">
+          <AlertCircle class="w-3 h-3" /> {{ modal.error }}
         </div>
 
-        <div class="flex gap-3">
-          <button @click="modal.show = false" class="flex-1 px-4 py-2 rounded bg-white/5 hover:bg-white/10 text-slate-400 font-bold text-[10px] uppercase tracking-widest transition-all">Cancel</button>
-          <button @click="handleModalSubmit" class="flex-1 px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] uppercase tracking-widest transition-all">Confirm</button>
+        <div class="flex gap-2">
+          <button @click="modal.show = false" class="flex-1 py-2 rounded bg-white/5 hover:bg-white/10 text-slate-500 font-black text-[10px] uppercase transition-all">Cancel</button>
+          <button @click="handleModalSubmit" class="flex-1 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[10px] uppercase transition-all">Confirm</button>
         </div>
       </div>
     </div>
 
-    <SetupWizard v-if="!store.setupComplete" />
+    <!-- Full Setup Wizard (Hidden if Key exists) -->
+    <SetupWizard v-if="!store.setupComplete && !store.apiKey" />
   </div>
 </template>
 
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
 
 :root {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Plus Jakarta Sans', sans-serif;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+  width: 3px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.05);
   border-radius: 10px;
 }
 
 .animate-in {
-  animation: animate-in 0.3s ease-out;
+  animation: animate-in 0.2s ease-out;
 }
 
 @keyframes animate-in {
