@@ -4,3 +4,6 @@ data/
 *.nsec
 __pycache__/
 .venv/
+*.db-shm
+*.db-wal
+peertube_to_nostr.db
