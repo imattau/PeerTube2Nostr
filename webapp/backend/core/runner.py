@@ -78,9 +78,10 @@ class Runner:
         api_base, api_chan, rss_url = s.get("api_base"), s.get("api_channel"), s.get("rss_url")
         last_polled = s.get("last_polled_ts")
         cutoff = None
-        if not last_polled:
+        if last_polled is None:
             lb = s.get("lookback_days") if s.get("lookback_days") is not None else lookback_days
-            if lb > 0: cutoff = self.n.now_ts() - (lb * 86400)
+            if lb is not None and lb > 0:
+                cutoff = self.n.now_ts() - (int(lb) * 86400)
 
         err = None
         if api_base and api_chan:

@@ -18,7 +18,7 @@ class AppManager:
         self.pub = NostrPublisher()
         self.runner = None
         self._thread = None
-        self._logs = []
+        self._logs: List[str] = []
         self._status = "stopped"
         self.api_key = os.environ.get("API_KEY")
         self._check_first_run()
