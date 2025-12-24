@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useAppStore } from '../store/app'
+import Button from './ui/Button.vue'
 import { 
-  Key, 
-  ShieldCheck, 
-  Rss, 
-  Zap,
-  ArrowRight,
   CheckCircle2,
-  Info
+  Info,
+  ArrowRight
 } from 'lucide-vue-next'
 
 const store = useAppStore()
@@ -44,15 +41,12 @@ const prevStep = () => step.value--
 const finish = async () => {
   try {
     store.setApiKey(form.apiKey)
-    
-    // Save signing config
     await store.updateSigningConfig({
       method: form.signingMethod,
       nsec: form.signingMethod === 'nsec' ? form.nsec : null,
       bunker_url: form.signingMethod === 'bunker' ? form.bunkerUrl : null,
       pubkey: form.signingMethod === 'extension' ? form.pubkey : null
     })
-
     if (form.firstChannel) {
       await store.addSource(form.firstChannel)
     }
@@ -64,178 +58,96 @@ const finish = async () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[100] bg-slate-950 flex items-center justify-center p-4 overflow-y-auto">
-    <div class="max-w-2xl w-full bg-slate-900 border border-slate-800 rounded-[2rem] p-8 md:p-12 shadow-2xl my-8">
+  <div class="fixed inset-0 z-[100] bg-black flex items-center justify-center p-4">
+    <div class="max-w-lg w-full bg-[#0a0a0a] border border-white/[0.05] rounded-xl p-10 shadow-2xl">
       
-      <!-- Progress Bar -->
-      <div class="flex gap-2 mb-12">
+      <!-- Stepper -->
+      <div class="flex gap-1.5 mb-10">
         <div v-for="i in 3" :key="i" :class="[
-          'h-1.5 flex-1 rounded-full transition-all duration-500',
-          step >= i ? 'bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]' : 'bg-slate-800'
+          'h-1 flex-1 rounded-full transition-all duration-500',
+          step >= i ? 'bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.4)]' : 'bg-white/[0.05]'
         ]"></div>
       </div>
 
-      <!-- Step 1: Authentication -->
-      <div v-if="step === 1" class="animate-in fade-in slide-in-from-bottom-4 duration-500">
-        <div class="bg-indigo-500/10 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
-          <Key class="w-8 h-8 text-indigo-500" />
-        </div>
-        <h2 class="text-3xl font-bold mb-4">Welcome to PeerTube2Nostr</h2>
-        <p class="text-slate-400 mb-8">First, enter your API Key. If you are running in Docker, check your logs for the generated key.</p>
+      <!-- Step 1: Security -->
+      <div v-if="step === 1" class="animate-in fade-in duration-500">
+        <h2 class="text-2xl font-bold text-white tracking-tight mb-2">Welcome</h2>
+        <p class="text-xs text-slate-500 mb-8 font-medium">Verify your administrative access to continue.</p>
         
         <div class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-slate-300 mb-2">API Security Key</label>
-            <input 
-              v-model="form.apiKey"
-              type="password"
-              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              placeholder="Paste your API key here"
-            />
+            <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Security API Key</label>
+            <input v-model="form.apiKey" type="password" placeholder="Paste your API key"
+              class="w-full bg-black border border-white/10 rounded-md px-4 py-2.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-xs" />
           </div>
-          <div class="flex items-start gap-3 bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-            <Info class="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
-            <p class="text-xs text-slate-400">This key protects your dashboard. You can set it via the <code>API_KEY</code> environment variable or use the one generated on first run.</p>
+          <div class="flex items-start gap-3 bg-white/[0.02] p-4 rounded-lg border border-white/[0.05]">
+            <Info class="w-4 h-4 text-indigo-500 shrink-0" />
+            <p class="text-[11px] text-slate-500 leading-relaxed italic">The key was generated on first run. Check your server logs or <code>API_KEY</code> env variable.</p>
           </div>
         </div>
 
-        <button @click="nextStep" :disabled="!form.apiKey" class="w-full mt-10 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all">
-          Next Step <ArrowRight class="w-5 h-5" />
-        </button>
+        <Button class="w-full mt-10" :disabled="!form.apiKey" @click="nextStep">
+          Continue Setup <ArrowRight class="w-4 h-4 ml-2" />
+        </Button>
       </div>
 
       <!-- Step 2: Signing -->
-      <div v-if="step === 2" class="animate-in fade-in slide-in-from-right-4 duration-500">
-        <div class="bg-amber-500/10 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
-          <ShieldCheck class="w-8 h-8 text-amber-500" />
-        </div>
-        <h2 class="text-3xl font-bold mb-4">Nostr Signing</h2>
-        <p class="text-slate-400 mb-8">Choose how you want to sign your Nostr events.</p>
+      <div v-if="step === 2" class="animate-in fade-in duration-500">
+        <h2 class="text-2xl font-bold text-white tracking-tight mb-2">Signing Method</h2>
+        <p class="text-xs text-slate-500 mb-8 font-medium">Choose how you want to sign Nostr events.</p>
         
-        <div class="grid grid-cols-1 gap-4 mb-8">
-          <button 
-            @click="form.signingMethod = 'nsec'"
+        <div class="grid grid-cols-1 gap-2 mb-8">
+          <button v-for="m in [
+            { id: 'nsec', label: 'Local NSEC', desc: 'Secure server-side storage' },
+            { id: 'bunker', label: 'Nostr Connect', desc: 'Sign via remote bunker (NIP-46)' },
+            { id: 'extension', label: 'Browser Extension', desc: 'Manual signing (NIP-07)', action: detectExtension }
+          ]" :key="m.id" @click="m.action ? m.action() : (form.signingMethod = m.id)"
             :class="[
-              'p-4 rounded-2xl border-2 text-left transition-all',
-              form.signingMethod === 'nsec' ? 'border-indigo-500 bg-indigo-500/5' : 'border-slate-800 bg-slate-800/30 hover:border-slate-700'
-            ]"
-          >
-            <div class="font-bold flex items-center justify-between">
-              Local NSEC
-              <CheckCircle2 v-if="form.signingMethod === 'nsec'" class="w-5 h-5 text-indigo-500" />
+              'p-3.5 rounded-lg border text-left transition-all',
+              form.signingMethod === m.id ? 'border-indigo-500 bg-indigo-500/[0.02]' : 'border-white/[0.05] bg-white/[0.01] hover:bg-white/[0.03]'
+            ]">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-200">{{ m.label }}</span>
+              <CheckCircle2 v-if="form.signingMethod === m.id" class="w-3.5 h-3.5 text-indigo-500" />
             </div>
-            <p class="text-xs text-slate-500 mt-1">Store your private key locally on the server (Encrypted at rest if possible).</p>
-          </button>
-
-          <button 
-            @click="form.signingMethod = 'bunker'"
-            :class="[
-              'p-4 rounded-2xl border-2 text-left transition-all',
-              form.signingMethod === 'bunker' ? 'border-indigo-500 bg-indigo-500/5' : 'border-slate-800 bg-slate-800/30 hover:border-slate-700'
-            ]"
-          >
-            <div class="font-bold flex items-center justify-between">
-              Nostr Connect (Bunker)
-              <CheckCircle2 v-if="form.signingMethod === 'bunker'" class="w-5 h-5 text-indigo-500" />
-            </div>
-            <p class="text-xs text-slate-500 mt-1">Sign remotely using NIP-46. Your key never touches our server.</p>
-          </button>
-
-          <button 
-            @click="detectExtension"
-            :class="[
-              'p-4 rounded-2xl border-2 text-left transition-all',
-              form.signingMethod === 'extension' ? 'border-indigo-500 bg-indigo-500/5' : 'border-slate-800 bg-slate-800/30 hover:border-slate-700'
-            ]"
-          >
-            <div class="font-bold flex items-center justify-between">
-              Browser Extension (NIP-07)
-              <CheckCircle2 v-if="form.signingMethod === 'extension'" class="w-5 h-5 text-indigo-500" />
-            </div>
-            <p class="text-xs text-slate-500 mt-1">Use Alby, Nos2X, etc. Identity detected from your browser.</p>
+            <p class="text-[10px] text-slate-600 mt-0.5">{{ m.desc }}</p>
           </button>
         </div>
 
-        <div class="space-y-4">
-          <div v-if="form.signingMethod === 'nsec'">
-            <label class="block text-sm font-medium text-slate-300 mb-2">Private Key (nsec...)</label>
-            <input 
-              v-model="form.nsec"
-              type="password"
-              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              placeholder="nsec1..."
-            />
-          </div>
-          <div v-else-if="form.signingMethod === 'bunker'">
-            <label class="block text-sm font-medium text-slate-300 mb-2">Bunker Connection String</label>
-            <input 
-              v-model="form.bunkerUrl"
-              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              placeholder="bunker://... or npub..."
-            />
-          </div>
-          <div v-else-if="form.signingMethod === 'extension'" class="bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl">
-            <div class="flex items-center gap-2 mb-2">
-              <CheckCircle2 class="w-4 h-4 text-indigo-500" />
-              <span class="text-sm font-bold text-indigo-400">Extension Detected</span>
-            </div>
-            <p class="text-[10px] font-mono break-all text-slate-400">{{ form.pubkey }}</p>
-            <p class="text-[10px] text-slate-500 mt-2 italic">Note: Background automation requires NIP-46 or NSEC. Extension mode is for manual dashboard actions.</p>
-          </div>
+        <div v-if="form.signingMethod === 'nsec'" class="space-y-4">
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Private Key (nsec...)</label>
+          <input v-model="form.nsec" type="password" placeholder="nsec1..."
+            class="w-full bg-black border border-white/10 rounded-md px-4 py-2.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-xs" />
         </div>
 
-        <div class="flex gap-4 mt-10">
-          <button @click="prevStep" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-4 rounded-xl transition-all">
-            Back
-          </button>
-          <button @click="nextStep" class="flex-[2] bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all">
-            Continue <ArrowRight class="w-5 h-5" />
-          </button>
+        <div v-if="form.signingMethod === 'extension' && form.pubkey" class="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-md">
+          <p class="text-[10px] font-bold text-emerald-500 uppercase tracking-tight">Active Identity Detected</p>
+          <p class="text-[9px] text-slate-500 truncate mt-0.5 font-mono">{{ form.pubkey }}</p>
+        </div>
+
+        <div class="flex gap-2 mt-10">
+          <Button variant="secondary" class="flex-1" @click="prevStep">Back</Button>
+          <Button class="flex-[2]" @click="nextStep">Continue</Button>
         </div>
       </div>
 
-      <!-- Step 3: Content -->
-      <div v-if="step === 3" class="animate-in fade-in slide-in-from-right-4 duration-500">
-        <div class="bg-emerald-500/10 w-16 h-16 rounded-2xl flex items-center justify-center mb-6">
-          <Rss class="w-8 h-8 text-emerald-500" />
-        </div>
-        <h2 class="text-3xl font-bold mb-4">First Source</h2>
-        <p class="text-slate-400 mb-8">Almost there! Add your first PeerTube channel to start publishing.</p>
+      <!-- Step 3: Source -->
+      <div v-if="step === 3" class="animate-in fade-in duration-500">
+        <h2 class="text-2xl font-bold text-white tracking-tight mb-2">Initialize</h2>
+        <p class="text-xs text-slate-500 mb-8 font-medium">Add your first PeerTube channel URL.</p>
         
         <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-slate-300 mb-2">Channel URL</label>
-            <input 
-              v-model="form.firstChannel"
-              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-              placeholder="https://peertube.instance/c/my_channel"
-            />
-          </div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Channel or RSS URL</label>
+          <input v-model="form.firstChannel" placeholder="https://example.tube/c/channel"
+            class="w-full bg-black border border-white/10 rounded-md px-4 py-2.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs" />
         </div>
 
-        <div class="bg-indigo-500/10 border border-indigo-500/20 p-6 rounded-3xl mt-10">
-          <h4 class="font-bold flex items-center gap-2 mb-2">
-            <Zap class="w-4 h-4 text-indigo-400" /> Fast Forward
-          </h4>
-          <p class="text-sm text-slate-400">Once you finish, the runner will start polling automatically and your first posts will appear in the queue shortly.</p>
-        </div>
-
-        <div class="flex gap-4 mt-10">
-          <button @click="prevStep" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-4 rounded-xl transition-all">
-            Back
-          </button>
-          <button @click="finish" class="flex-[2] bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all">
-            Finish Setup <CheckCircle2 class="w-5 h-5" />
-          </button>
+        <div class="flex gap-2 mt-10">
+          <Button variant="secondary" class="flex-1" @click="prevStep">Back</Button>
+          <Button class="flex-[2]" @click="finish">Finish Setup</Button>
         </div>
       </div>
 
     </div>
   </div>
 </template>
-
-<style scoped>
-.animate-in {
-  animation-duration: 0.5s;
-}
-</style>
