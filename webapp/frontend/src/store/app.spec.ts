@@ -4,7 +4,6 @@ import { useAppStore } from './app'
 import axios from 'axios'
 
 vi.mock('axios')
-const mockedAxios = axios as vi.Mocked<typeof axios>
 
 describe('App Store', () => {
   beforeEach(() => {
