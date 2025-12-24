@@ -16,19 +16,24 @@ class RateLimiter:
 
     def wait_interval(self) -> int:
         last = self.store.last_posted_ts() or 0
-        return max(0, self.min_interval - (self.now_ts - last)) if last else 0
+        if last:
+            return max(0, self.min_interval - (self.now_ts - last))
+        return 0
 
     def wait_hourly(self) -> int:
         if self.store.count_posted_since(self.now_ts - 3600) >= self.max_per_hour:
             oldest = self.store.oldest_posted_since(self.now_ts - 3600)
-            if oldest: return max(0, 3600 - (self.now_ts - oldest))
+            if oldest:
+                return max(0, 3600 - (self.now_ts - oldest))
         return 0
 
     def wait_daily_for_source(self, source_id: Optional[int]) -> int:
-        if source_id is None or self.max_per_day_per_source <= 0: return 0
+        if source_id is None or self.max_per_day_per_source <= 0:
+            return 0
         if self.store.count_posted_since_for_source(source_id, self.now_ts - 86400) >= self.max_per_day_per_source:
             oldest = self.store.oldest_posted_since_for_source(source_id, self.now_ts - 86400)
-            if oldest: return max(0, 86400 - (self.now_ts - oldest))
+            if oldest:
+                return max(0, 86400 - (self.now_ts - oldest))
         return 0
 
     def next_wait(self, source_id: Optional[int]) -> int:

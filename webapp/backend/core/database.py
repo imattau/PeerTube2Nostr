@@ -127,6 +127,8 @@ class Store:
         self._ensure_setting("min_publish_interval_seconds", "1200")
         self._ensure_setting("max_posts_per_hour", "3")
         self._ensure_setting("max_posts_per_day_per_source", "1")
+        self._ensure_setting("setup_complete", "0")
+        self._ensure_setting("signing_method", "nsec") # nsec, bunker
 
         self.conn.commit()
 
@@ -267,7 +269,8 @@ class Store:
             (source_id,)
         )
         row = cur.fetchone()
-        if not row: return None
+        if not row:
+            return None
         keys = ["id", "enabled", "api_base", "api_channel", "api_channel_url", "rss_url", "lookback_days", "last_polled_ts"]
         return dict(zip(keys, row))
 

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, reactive } from 'vue'
+import { onMounted, onUnmounted, reactive } from 'vue'
 import { useAppStore } from './store/app'
+import SetupWizard from './components/SetupWizard.vue'
 import { 
   Activity, 
-  Settings, 
   Database, 
   Rss, 
   Key, 
@@ -16,7 +16,6 @@ import {
   Square,
   AlertCircle
 } from 'lucide-vue-next'
-
 const store = useAppStore()
 
 const modal = reactive({
@@ -74,6 +73,11 @@ onUnmounted(() => {
 const addSource = () => openModal('Add Source', 'PeerTube Channel or RSS URL', store.addSource)
 const addRelay = () => openModal('Add Relay', 'Relay URL (wss://...)', store.addRelay)
 const setNsec = () => openModal('Set NSEC', 'nsec1...', store.updateNsec)
+
+const promptKey = () => {
+  const key = window.prompt('Enter API Key')
+  if (key) store.setApiKey(key)
+}
 
 const formatTs = (ts: number | null) => {
   if (!ts) return 'Never'
@@ -252,7 +256,7 @@ const formatTs = (ts: number | null) => {
             <Activity class="w-5 h-5 text-indigo-400" />
             <h2 class="text-xl font-semibold">System Logs</h2>
           </div>
-          <button @click="store.setApiKey(prompt('Enter API Key') || '')" class="text-xs text-slate-500 hover:text-indigo-400 flex items-center gap-1">
+          <button @click="promptKey" class="text-xs text-slate-500 hover:text-indigo-400 flex items-center gap-1">
              <Key class="w-3 h-3" /> {{ store.apiKey ? 'Change Key' : 'Set Key' }}
           </button>
         </div>
@@ -293,6 +297,9 @@ const formatTs = (ts: number | null) => {
         </div>
       </div>
     </div>
+
+    <!-- Setup Wizard -->
+    <SetupWizard v-if="!store.setupComplete" />
   </div>
 </template>
 

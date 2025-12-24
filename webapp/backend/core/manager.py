@@ -1,4 +1,6 @@
 import threading
+import secrets
+import os
 from typing import List, Optional
 from .database import Store, get_stored_nsec, set_stored_nsec
 from .utils import UrlNormaliser
@@ -18,6 +20,37 @@ class AppManager:
         self._thread = None
         self._logs = []
         self._status = "stopped"
+        self.api_key = os.environ.get("API_KEY")
+        self._check_first_run()
+
+    def _check_first_run(self):
+        is_complete = self.store.get_setting("setup_complete") == "1"
+        if not is_complete and not self.api_key:
+            # Generate a random API key for the user if none provided
+            self.api_key = secrets.token_urlsafe(32)
+            self._log("!!! FIRST RUN DETECTED !!!")
+            self._log(f"Generated API KEY: {self.api_key}")
+            self._log("Please save this key. You will need it to access the dashboard.")
+            print("\n" + "="*60)
+            print(f"PEERTUBE2NOSTR GENERATED API KEY: {self.api_key}")
+            print("="*60 + "\n")
+
+    def is_setup_complete(self) -> bool:
+        return self.store.get_setting("setup_complete") == "1"
+
+    def complete_setup(self):
+        self.store.set_setting("setup_complete", "1")
+        self._log("Setup marked as complete.")
+
+    def set_signing_config(self, method: str, nsec: Optional[str] = None, bunker_url: Optional[str] = None, pubkey: Optional[str] = None):
+        self.store.set_setting("signing_method", method)
+        if nsec:
+            set_stored_nsec(self.db_path, nsec)
+        if bunker_url:
+            self.store.set_setting("bunker_url", bunker_url)
+        if pubkey:
+            self.store.set_setting("pubkey", pubkey)
+        self._log(f"Signing configuration updated: {method}")
 
     def _log(self, msg: str):
         self._logs.append(msg)

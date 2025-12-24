@@ -1,29 +1,55 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
+import type { AxiosInstance } from 'axios'
 
-const api = axios.create({
-  baseURL: 'http://localhost:8000/api'
-})
+interface AppState {
+  metrics: any
+  logs: string[]
+  sources: any[]
+  relays: any[]
+  queue: any[]
+  loading: boolean
+  setupComplete: boolean
+  apiKey: string
+}
 
 export const useAppStore = defineStore('app', {
-  state: () => ({
-    metrics: {} as any,
-    logs: [] as string[],
-    sources: [] as any[],
-    relays: [] as any[],
-    queue: [] as any[],
+  state: (): AppState => ({
+    metrics: {},
+    logs: [],
+    sources: [],
+    relays: [],
+    queue: [],
     loading: false,
+    setupComplete: true,
     apiKey: localStorage.getItem('api_key') || ''
   }),
   actions: {
-    getApi() {
+    getApi(): AxiosInstance {
       return axios.create({
         baseURL: 'http://localhost:8000/api',
         headers: this.apiKey ? { 'X-API-Key': this.apiKey } : {}
       })
     },
+    async fetchSetupStatus() {
+      try {
+        const res = await axios.get('http://localhost:8000/api/setup/status')
+        this.setupComplete = res.data.is_complete
+      } catch (e) {
+        console.error('Setup status check failed', e)
+      }
+    },
+    async finishSetup() {
+      await this.getApi().post('/setup/complete')
+      this.setupComplete = true
+    },
     async fetchAll() {
       this.loading = true
+      await this.fetchSetupStatus()
+      if (!this.setupComplete && !this.apiKey) {
+        this.loading = false
+        return
+      }
       const api = this.getApi()
       try {
         const [m, s, r, q] = await Promise.all([
@@ -38,6 +64,9 @@ export const useAppStore = defineStore('app', {
         this.queue = q.data
       } catch (e) {
         console.error('Fetch failed', e)
+        if (axios.isAxiosError(e) && e.response?.status === 401) {
+          this.setupComplete = false
+        }
       } finally {
         this.loading = false
       }
@@ -78,6 +107,9 @@ export const useAppStore = defineStore('app', {
     async updateNsec(nsec: string) {
       await this.getApi().post('/nsec', { nsec })
       await this.fetchAll()
+    },
+    async updateSigningConfig(config: any) {
+      await this.getApi().post('/setup/config', config)
     },
     async startRunner() {
       await this.getApi().post('/control/start')
