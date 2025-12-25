@@ -1,12 +1,7 @@
-import threading
 import secrets
 import os
+import time
 from typing import List, Optional
-from .database import Store, get_stored_nsec, set_stored_nsec
-from .utils import UrlNormaliser
-from .peertube import PeerTubeClient
-from .nostr import NostrPublisher
-from .runner import Runner
 
 class AppManager:
     def __init__(self, db_path: str):
@@ -20,23 +15,44 @@ class AppManager:
         self._thread = None
         self._logs: List[str] = []
         self._status = "stopped"
-        self.api_key = os.environ.get("API_KEY")
+        self._setup_token: Optional[str] = None
+        self._setup_token_expiry: Optional[float] = None
         self._check_first_run()
 
     def _check_first_run(self):
-        is_complete = self.store.get_setting("setup_complete") == "1"
-        if not is_complete and not self.api_key:
-            # Generate a random API key for the user if none provided
-            self.api_key = secrets.token_urlsafe(32)
-            self._log("!!! FIRST RUN DETECTED !!!")
-            self._log(f"Generated API KEY: {self.api_key}")
-            self._log("Please save this key. You will need it to access the dashboard.")
-            print("\n" + "="*60)
-            print(f"PEERTUBE2NOSTR GENERATED API KEY: {self.api_key}")
-            print("="*60 + "\n")
+        api_key = self.store.get_setting("api_key")
+        if not api_key:
+            new_key = secrets.token_urlsafe(32)
+            self.store.set_setting("api_key", new_key)
+            self._log(f"New API Key generated and stored.")
+
+    def get_api_key(self) -> str:
+        return self.store.get_setting("api_key", "") or ""
+
+    def regenerate_api_key(self) -> str:
+        new_key = secrets.token_urlsafe(32)
+        self.store.set_setting("api_key", new_key)
+        self._log(f"API Key has been regenerated.")
+        return new_key
+
+    def get_setup_token(self) -> str:
+        self._setup_token = secrets.token_urlsafe(16)
+        self._setup_token_expiry = time.time() + 300 # Token valid for 5 minutes
+        return self._setup_token
+
+    def validate_setup_token(self, token: str) -> bool:
+        if (
+            token
+            and self._setup_token
+            and self._setup_token_expiry
+            and time.time() < self._setup_token_expiry
+            and token == self._setup_token
+        ):
+            self._setup_token = None # Invalidate after use
+            return True
+        return False
 
     def is_setup_complete(self) -> bool:
-        return self.store.get_setting("setup_complete") == "1"
 
     def complete_setup(self):
         self.store.set_setting("setup_complete", "1")

@@ -129,6 +129,7 @@ class Store:
         self._ensure_setting("max_posts_per_day_per_source", "1")
         self._ensure_setting("setup_complete", "0")
         self._ensure_setting("signing_method", "nsec") # nsec, bunker
+        self._ensure_setting("api_key", "") # Will be auto-generated
 
         self.conn.commit()
 
