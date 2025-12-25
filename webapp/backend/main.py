@@ -41,20 +41,20 @@ app.add_middleware(
 async def startup_event():
     manager.start_background_task()
 
+class SignInRequest(BaseModel):
+    method: str
+    nsec: Optional[str] = None
+    bunker_url: Optional[str] = None
+
+@app.post("/api/signIn")
+async def sign_in(data: SignInRequest):
+    api_key = manager.signIn(data.method, data.nsec, data.bunker_url)
+    return {"api_key": api_key}
+
 @app.get("/api/setup/status")
 async def get_setup_status():
     is_complete = manager.is_setup_complete()
-    token = None
-    if not is_complete:
-        token = manager.get_setup_token()
-    return {
-        "is_complete": is_complete,
-        "setup_token": token
-    }
-
-@app.post("/api/setup/complete/{token}", status_code=200)
-async def mark_setup_complete(background_tasks: BackgroundTasks, _: None = Depends(verify_setup_token)):
-    return {"status": "Setup complete", "api_key": manager.get_api_key()}
+    return { "is_complete": is_complete }
 
 @app.post("/api/security/regenerate-key", dependencies=[Depends(verify_api_key)])
 async def regenerate_key():

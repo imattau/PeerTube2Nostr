@@ -8,8 +8,8 @@ defineProps<Props>()
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center py-10 px-4 text-center">
-    <div class="bg-white/[0.02] p-3 rounded-full mb-3 border border-border-subtle">
+  <div class="flex flex-col items-center justify-center py-12 px-4 text-center h-full min-h-[120px]">
+    <div class="bg-surface-2 p-3 rounded-full mb-3 border border-border-subtle">
       <component :is="icon" v-if="icon" class="w-5 h-5 text-slate-600" />
     </div>
     <p class="text-[13px] font-semibold text-text-primary">{{ title }}</p>

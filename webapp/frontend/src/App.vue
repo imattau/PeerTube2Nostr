@@ -12,7 +12,7 @@ import EmptyState from './components/ui/EmptyState.vue'
 import BaseModal from './components/ui/BaseModal.vue'
 import Button from './components/ui/Button.vue'
 import Badge from './components/ui/Badge.vue'
-import { PlusCircle, Rss, Trash2, CheckCircle2, Play, Square, ShieldCheck, Zap, Terminal, ExternalLink, Clock, Database, Key } from 'lucide-vue-next'
+import { Rss, PlusCircle, Trash2, CheckCircle2, Play, Square, ShieldCheck, Zap, Terminal, ExternalLink, Clock, Database, Key } from 'lucide-vue-next'
 
 const store = useAppStore()
 const showApiKeyBanner = ref(true)
@@ -69,7 +69,7 @@ const statusVariant = computed(() => store.metrics.status === 'idle' ? 'success'
               <CardHeader title="Pending Queue" :icon="Clock" />
               <div class="p-4">
                 <div v-if="store.queue.length > 0" class="divide-y divide-border-subtle">
-                  <div v-for="item in store.queue" :key="item.id" class="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
+                  <div v-for="item in store.queue" :key="item.id" class="flex items-center gap-4 py-3 group first:pt-0 last:pb-0">
                     <img v-if="item.thumbnail_url" :src="item.thumbnail_url" class="w-16 h-9 object-cover rounded bg-surface-2" />
                     <div v-else class="w-16 h-9 rounded bg-surface-2 flex items-center justify-center"><Play class="w-3 h-3 text-slate-700" /></div>
                     <div class="flex-1 min-w-0">

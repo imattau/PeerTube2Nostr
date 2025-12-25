@@ -35,6 +35,17 @@ class AppManager:
         self._log(f"API Key has been regenerated.")
         return new_key
 
+    def signIn(self, method: str, nsec: Optional[str] = None, bunker_url: Optional[str] = None) -> str:
+        self.store.set_setting("signing_method", method)
+        if nsec:
+            set_stored_nsec(self.db_path, nsec)
+        if bunker_url:
+            self.store.set_setting("bunker_url", bunker_url)
+        
+        self.store.set_setting("setup_complete", "1")
+        self._log(f"User signed in with method: {method}")
+        return self.get_api_key()
+
     def get_setup_token(self) -> str:
         self._setup_token = secrets.token_urlsafe(16)
         self._setup_token_expiry = time.time() + 300 # Token valid for 5 minutes
@@ -53,6 +64,7 @@ class AppManager:
         return False
 
     def is_setup_complete(self) -> bool:
+        return self.store.get_setting("setup_complete") == "1"
 
     def complete_setup(self):
         self.store.set_setting("setup_complete", "1")

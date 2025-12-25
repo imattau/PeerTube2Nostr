@@ -40,26 +40,20 @@ export const useAppStore = defineStore('app', {
       try {
         const res = await axios.get('http://localhost:8000/api/setup/status')
         this.isSetupComplete = res.data.is_complete
-        if (!this.isSetupComplete && res.data.setup_token) {
-          // Temporarily use the setup token for the wizard
-          this.api.defaults.headers.common['X-Setup-Token'] = res.data.setup_token
-        }
-        return res.data
       } catch (e) {
-        console.error('Setup status check failed', e)
-        return { is_complete: false }
+        this.isSetupComplete = false
       }
     },
-    async finishSetup(token: string) {
-      const res = await axios.post(`/api/setup/complete/${token}`)
-      this.setApiKey(res.data.api_key)
-      this.isSetupComplete = true
+    async signIn(credentials: { method: string, nsec?: string, bunkerUrl?: string }) {
+      const res = await axios.post('http://localhost:8000/api/signIn', credentials)
+      if (res.data.api_key) {
+        this.setApiKey(res.data.api_key)
+        this.isSetupComplete = true
+        this.fetchAll()
+      }
     },
     async fetchAll() {
-      if (!this.apiKey) {
-        await this.fetchSetupStatus()
-        if (!this.isSetupComplete) return
-      }
+      if (!this.apiKey) return
       this.loading = true
       try {
         const [m, s, r, q] = await Promise.all([
@@ -70,9 +64,8 @@ export const useAppStore = defineStore('app', {
         ])
         this.metrics = m.data; this.sources = s.data; this.relays = r.data; this.queue = q.data
       } catch (e) {
-        console.error('Fetch failed', e)
         if (axios.isAxiosError(e) && e.response?.status === 401) {
-           this.apiKey = '' // Clear invalid key
+           this.apiKey = ''
            localStorage.removeItem('api_key')
         }
       } finally {
