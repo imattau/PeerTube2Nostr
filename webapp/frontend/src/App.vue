@@ -50,11 +50,17 @@ const handleModalSubmit = async () => {
 }
 
 let pollInterval: any
-onMounted(() => {
-  store.fetchAll(); store.fetchLogs()
-  pollInterval = setInterval(() => { store.fetchAll(); store.fetchLogs() }, 5000)
+onMounted(async () => {
+  await store.fetchSetupStatus()
+  if (store.apiKey) {
+    store.fetchAll()
+    store.fetchLogs()
+    pollInterval = setInterval(() => {
+      store.fetchAll()
+      store.fetchLogs()
+    }, 5000)
+  }
 })
-onUnmounted(() => clearInterval(pollInterval))
 
 const addSource = () => openModal('Add Source', 'PeerTube Channel or RSS URL', store.addSource)
 const addRelay = () => openModal('Add Relay', 'Relay URL (wss://...)', store.addRelay)
