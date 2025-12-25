@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
+import { onMounted, reactive, ref, computed } from 'vue'
 import { useAppStore } from './store/app'
 import SetupWizard from './components/SetupWizard.vue'
 
@@ -49,13 +49,12 @@ const handleModalSubmit = async () => {
   }
 }
 
-let pollInterval: any
 onMounted(async () => {
   await store.fetchSetupStatus()
   if (store.apiKey) {
     store.fetchAll()
     store.fetchLogs()
-    pollInterval = setInterval(() => {
+    setInterval(() => {
       store.fetchAll()
       store.fetchLogs()
     }, 5000)
