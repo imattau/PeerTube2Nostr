@@ -60,7 +60,7 @@ class PeerTube2NostrApp(Gtk.Application):
             self.store = Store(db_path, normaliser)
             self.store.init_schema()
             self.store.seed_default_relays_if_empty()
-            self.manager = DesktopAppManager(self.store)
+            self.manager = DesktopAppManager(self.store, on_update=self._on_background_update)
         except Exception as e:
             dialog = Gtk.MessageDialog(
                 transient_for=None,
@@ -93,6 +93,13 @@ class PeerTube2NostrApp(Gtk.Application):
         self._show_main_window()
         wizard.destroy()
         return False
+
+    def _on_background_update(self, data):
+        if self.window:
+            view = getattr(self.window, '_current_view', None)
+            screen = getattr(self.window, f'_screen_{view}', None) if view else None
+            if screen and hasattr(screen, 'refresh'):
+                screen.refresh()
 
     def _on_quit(self):
         if self.manager:

@@ -80,12 +80,25 @@ class DesktopAppManager:
                 rm = RelayManager(timeout=5)
                 rm.add_relay(r)
                 rm.open_connections()
+                # open_connections is non-blocking in pynostr,
+                # so poll message_pool briefly to confirm the connection
+                mp = getattr(rm, "message_pool", None)
+                connected = False
+                deadline = time.time() + 4
+                while time.time() < deadline:
+                    if mp is not None and hasattr(mp, "has_events") and mp.has_events():
+                        connected = True
+                        break
+                    time.sleep(0.1)
                 latency = int((time.time() - start) * 1000)
                 try:
                     rm.close_connections()
                 except Exception:
                     pass
-                self._store.update_relay_latency(r, latency)
+                if connected:
+                    self._store.update_relay_latency(r, latency)
+                else:
+                    self._store.mark_relay_used(r, "Connection timeout")
             except Exception as e:
                 self._store.mark_relay_used(r, str(e))
 
@@ -94,12 +107,9 @@ class DesktopAppManager:
             try:
                 self._check_relays_health()
 
-                if not self._runner:
-                    time.sleep(5)
-                    continue
-
-                self._runner.ingest_sources_once()
-                self._runner.publish_one_pending()
+                if self._runner:
+                    self._runner.ingest_sources_once()
+                    self._runner.publish_one_pending()
 
                 metrics = self._store.get_metrics()
                 if isinstance(metrics, dict):
