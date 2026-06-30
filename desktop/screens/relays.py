@@ -12,6 +12,7 @@ class RelaysScreen(Gtk.Box):
     def __init__(self, window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.get_style_context().add_class('content-area')
+        self.get_style_context().add_class('relays-screen')
         self._window = window
         self.set_margin_start(40)
         self.set_margin_end(40)

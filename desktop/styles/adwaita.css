@@ -361,6 +361,23 @@ GtkAssistant {
     min-height: 24px;
 }
 
+/* ---- Screen Backgrounds ---- */
+.overview-screen {
+    background-color: #F6F5F4;
+}
+.relays-screen {
+    background-color: #F6F5F4;
+}
+.sources-screen {
+    background-color: #F6F5F4;
+}
+.preferences-screen {
+    background-color: #F6F5F4;
+}
+.diagnostics-screen {
+    background-color: #F6F5F4;
+}
+
 /* ---- Typography ---- */
 .heading-1 {
     font-size: 32px;
