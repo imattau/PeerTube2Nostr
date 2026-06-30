@@ -21,7 +21,7 @@ class AddSourceDialog(Gtk.Dialog):
         content.set_margin_bottom(16)
 
         title_lbl = Gtk.Label(label='Add a PeerTube channel or RSS feed')
-        title_lbl.get_style_context().add_class('heading-3')
+        title_lbl.get_style_context().add_class('dialog-title')
         title_lbl.set_halign(Gtk.Align.START)
         content.pack_start(title_lbl, False, False, 0)
 

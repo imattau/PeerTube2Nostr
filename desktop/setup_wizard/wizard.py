@@ -94,8 +94,17 @@ class SetupWizard(Gtk.Assistant):
         if relay_url:
             try:
                 self._store.add_relay(relay_url)
-            except Exception:
-                pass
+            except Exception as e:
+                err_dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text='Failed to add relay',
+                    secondary_text=str(e),
+                )
+                err_dialog.run()
+                err_dialog.destroy()
 
         if self._pages['relay'].get_import_nip65():
             nsec = get_stored_nsec(self._store.db_path)

@@ -59,8 +59,17 @@ class SourcesScreen(Gtk.Box):
             except Exception:
                 try:
                     store.add_rss_source(url)
-                except Exception:
-                    pass
+                except Exception as e:
+                    err_dialog = Gtk.MessageDialog(
+                        transient_for=self._window,
+                        modal=True,
+                        message_type=Gtk.MessageType.ERROR,
+                        buttons=Gtk.ButtonsType.OK,
+                        text='Failed to add source',
+                        secondary_text=str(e),
+                    )
+                    err_dialog.run()
+                    err_dialog.destroy()
             self.refresh()
 
     def _on_toggle(self, source_id: int, switch: Gtk.Switch):
@@ -153,12 +162,10 @@ class SourcesScreen(Gtk.Box):
         switch = Gtk.Switch()
         switch.set_active(enabled)
         switch.connect('notify::active', lambda s, _, i=sid: self._on_toggle(i, s))
-        row.set_right_widget(switch)
 
         menu_btn = Gtk.Button(label='\u22EE')
         menu_btn.get_style_context().add_class('button-icon')
         menu_btn.connect('clicked', lambda _, i=sid, n=title: self._on_remove(i, n))
-        row.set_right_widget(switch)
 
         action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         action_box.pack_end(menu_btn, False, False, 0)

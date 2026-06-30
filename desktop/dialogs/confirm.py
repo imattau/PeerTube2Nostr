@@ -25,7 +25,7 @@ class ConfirmDialog(Gtk.Dialog):
         self.get_content_area().set_margin_bottom(16)
 
         title_lbl = Gtk.Label(label=title)
-        title_lbl.get_style_context().add_class('heading-3')
+        title_lbl.get_style_context().add_class('dialog-title')
         title_lbl.set_halign(Gtk.Align.START)
         self.get_content_area().pack_start(title_lbl, False, False, 0)
 

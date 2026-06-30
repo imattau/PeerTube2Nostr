@@ -19,6 +19,9 @@ class IngestedItem:
     account_url: Optional[str]
     published_ts: Optional[int]
     thumbnail_url: Optional[str]
+    duration: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 @dataclass
 class DashboardMetrics:

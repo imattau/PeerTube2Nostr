@@ -32,22 +32,23 @@ class PeerTubeClient:
         d = feedparser.parse(rss_url)
         return list(reversed(d.entries or []))
 
-    def enrich_video(self, watch_url: str) -> Tuple[Optional[str], ...]:
+    def enrich_video(self, watch_url: str) -> tuple:
         x = self.n.extract_watch_id(watch_url)
-        if not x: return (None,) * 12
+        if not x: return (None,) * 15
         base, vid = x
         v = self._get_json(f"{base}/api/v1/videos/{vid}")
-        if not isinstance(v, dict): return (base, vid) + (None,) * 10
+        if not isinstance(v, dict): return (base, vid) + (None,) * 13
         
         hls = self._pick_hls_url(v)
-        mp4 = self._pick_best_mp4_url(v)
+        mp4, w, h = self._pick_best_mp4(v)
+        duration = v.get("duration")
         instance, ch_name, ch_url, acc_name, acc_url = self._extract_attribution(base, v)
         api_title = (v.get("name") or "").strip() or None
         api_desc = (v.get("description") or "").strip() or None
         thumb = v.get("thumbnailPath")
         if thumb and not thumb.startswith("http"):
             thumb = f"{base}{thumb}"
-        return base, vid, mp4, hls, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc, thumb
+        return base, vid, mp4, hls, duration, w, h, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc, thumb
 
     def _pick_hls_url(self, v: dict) -> Optional[str]:
         for pl in (v.get("streamingPlaylists") or []):
@@ -56,19 +57,21 @@ class PeerTubeClient:
                 if isinstance(val, str) and val.startswith("http") and val.endswith(".m3u8"): return val
         return None
 
-    def _pick_best_mp4_url(self, v: dict) -> Optional[str]:
+    def _pick_best_mp4(self, v: dict) -> tuple[Optional[str], Optional[int], Optional[int]]:
         candidates = []
         def consider(f):
             fu = f.get("fileUrl") or f.get("url")
             if isinstance(fu, str) and fu.startswith("http") and (".mp4" in fu.lower() or "mp4" in (f.get("mimeType") or "").lower()):
                 res = f.get("resolution", {})
-                candidates.append((int(res.get("height") or 0), int(f.get("size") or 0), fu))
+                h = res.get("height")
+                w = res.get("width")
+                candidates.append((int(h or 0), int(w or 0), int(f.get("size") or 0), fu, h, w))
         for f in (v.get("files") or []): consider(f)
         for pl in (v.get("streamingPlaylists") or []):
             for f in (pl.get("files") or []): consider(f)
-        if not candidates: return None
-        candidates.sort(key=lambda x: (x[0] <= 720, x[0], x[1]), reverse=True)
-        return candidates[0][2]
+        if not candidates: return (None, None, None)
+        candidates.sort(key=lambda x: (x[0] <= 720, x[0], x[2]), reverse=True)
+        return (candidates[0][3], candidates[0][4], candidates[0][5])
 
     def _extract_attribution(self, base: str, v: dict) -> Tuple[Optional[str], ...]:
         ch = v.get("channel") or {}
@@ -105,13 +108,14 @@ class IngestPipeline:
                 skipped += 1
                 continue
 
-            base, vid, mp4, hls, inst, ch_n, ch_u, acc_n, acc_u, api_t, api_s, thumb = self.pt.enrich_video(watch)
+            base, vid, mp4, hls, dur, w, h, inst, ch_n, ch_u, acc_n, acc_u, api_t, api_s, thumb = self.pt.enrich_video(watch)
             item = IngestedItem(
                 source_id=source_id, entry_key=key, watch_url=watch, title=api_t or title_fn(entry), 
                 summary=api_s or summary_fn(entry), peertube_base=base, peertube_video_id=vid, 
                 hls_url=hls, mp4_url=mp4, peertube_instance=inst, channel_name=ch_n, 
                 channel_url=ch_u or channel_url_fallback, account_name=acc_n, account_url=acc_u, 
-                published_ts=pub_ts, thumbnail_url=thumb
+                published_ts=pub_ts, thumbnail_url=thumb,
+                duration=dur, width=w, height=h
             )
             self.store.insert_pending(item)
             inserted += 1

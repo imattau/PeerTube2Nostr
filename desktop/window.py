@@ -211,6 +211,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self._stack.set_visible_child_name(view_name)
         self._update_nav_active(view_name)
         self._current_view = view_name
+        screen = getattr(self, f'_screen_{view_name}', None)
+        if screen and hasattr(screen, 'refresh'):
+            screen.refresh()
 
     def _update_nav_active(self, active_name: str):
         for row, name in self._nav_buttons:

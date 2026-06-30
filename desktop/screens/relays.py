@@ -51,6 +51,8 @@ class RelaysScreen(Gtk.Box):
         self._relay_box.set_margin_top(24)
         self.pack_start(self._relay_box, False, False, 0)
 
+        self.refresh()
+
     def _on_add(self, _btn):
         store = getattr(self._window, 'store', None)
         if not store:
@@ -62,8 +64,17 @@ class RelaysScreen(Gtk.Box):
         if response == Gtk.ResponseType.OK and url:
             try:
                 store.add_relay(url)
-            except Exception:
-                pass
+            except Exception as e:
+                err_dialog = Gtk.MessageDialog(
+                    transient_for=self._window,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text='Failed to add relay',
+                    secondary_text=str(e),
+                )
+                err_dialog.run()
+                err_dialog.destroy()
             self.refresh()
 
     def _on_import_nip65(self, _btn):

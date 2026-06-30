@@ -6,7 +6,8 @@
    ========================================================= */
 
 /* ---- Base ---- */
-GtkWindow {
+window, GtkWindow {
+    background-image: none;
     background-color: #F6F5F4;
 }
 
@@ -14,23 +15,29 @@ GtkWindow {
     background-color: #F6F5F4;
 }
 GtkStack {
+    background-image: none;
     background-color: #F6F5F4;
 }
 GtkOverlay {
+    background-image: none;
     background-color: #F6F5F4;
 }
-GtkListBox {
+list, GtkListBox {
+    background-image: none;
     background-color: transparent;
 }
-GtkListBoxRow {
+list row, row, GtkListBoxRow {
+    background-image: none;
     background-color: #FFFFFF;
 }
-GtkScrolledWindow {
+scrolledwindow, GtkScrolledWindow {
+    background-image: none;
     background-color: #F6F5F4;
 }
 
 /* ---- Header Bar ---- */
-GtkHeaderBar {
+headerbar, GtkHeaderBar {
+    background-image: none;
     background-color: #EBEAE9;
     border-bottom: 1px solid #D8D6D3;
     padding: 0 8px;
@@ -53,21 +60,23 @@ GtkHeaderBar {
 }
 
 /* ---- Buttons ---- */
-.button-icon {
+button.button-icon, .button-icon {
     min-width: 38px;
     min-height: 38px;
     padding: 0;
     border-radius: 8px;
     border: 1px solid #D8D6D3;
+    background-image: none;
     background-color: #FFFFFF;
     color: #2E3436;
     font-size: 16px;
 }
-.button-icon:hover {
+button.button-icon:hover, .button-icon:hover {
     background-color: #F0EFEE;
 }
 
-.button-primary {
+button.button-primary, .button-primary {
+    background-image: none;
     background-color: #3584E4;
     color: #FFFFFF;
     border: none;
@@ -76,11 +85,12 @@ GtkHeaderBar {
     font-size: 13px;
     font-weight: 600;
 }
-.button-primary:hover {
+button.button-primary:hover, .button-primary:hover {
     background-color: #2a6fc7;
 }
 
-.button-default {
+button.button-default, .button-default {
+    background-image: none;
     background-color: #FFFFFF;
     color: #2E3436;
     border: 1px solid #D8D6D3;
@@ -89,11 +99,12 @@ GtkHeaderBar {
     font-size: 13px;
     font-weight: 600;
 }
-.button-default:hover {
+button.button-default:hover, .button-default:hover {
     background-color: #F0EFEE;
 }
 
-.button-destructive {
+button.button-destructive, .button-destructive {
+    background-image: none;
     background-color: #E01B24;
     color: #FFFFFF;
     border: none;
@@ -102,7 +113,7 @@ GtkHeaderBar {
     font-size: 13px;
     font-weight: 600;
 }
-.button-destructive:hover {
+button.button-destructive:hover, .button-destructive:hover {
     background-color: #c0141d;
 }
 
@@ -151,26 +162,26 @@ GtkHeaderBar {
 /* ---- Badges ---- */
 .badge {
     border-radius: 999px;
-    padding: 2px 8px;
+    padding: 4px 8px;
     font-size: 11px;
     font-weight: 600;
     min-width: 20px;
     min-height: 18px;
 }
 .badge-success {
-    background-color: #1E9B5E;
+    background-color: #2EC27E;
     color: #FFFFFF;
 }
 .badge-accent {
-    background-color: #2563EB;
+    background-color: #3584E4;
     color: #FFFFFF;
 }
 .badge-warning {
-    background-color: #B8860B;
+    background-color: #E5A50A;
     color: #FFFFFF;
 }
 .badge-error {
-    background-color: #B71C1C;
+    background-color: #E01B24;
     color: #FFFFFF;
 }
 
@@ -202,25 +213,27 @@ GtkHeaderBar {
 }
 
 /* ---- Combo Box & Check Button ---- */
-GtkComboBoxText {
+combobox text, combobox, GtkComboBoxText {
     border: 1px solid #D8D6D3;
     border-radius: 8px;
     padding: 6px 12px;
+    background-image: none;
     background-color: #FFFFFF;
     color: #2E3436;
     min-height: 28px;
 }
-GtkComboBoxText:hover {
+combobox text:hover, GtkComboBoxText:hover {
     border-color: #3584E4;
 }
 
-GtkCheckButton {
+checkbutton, check button, GtkCheckButton {
     min-width: 18px;
     min-height: 18px;
+    background-image: none;
     background-color: #FFFFFF;
     color: #2E3436;
 }
-GtkCheckButton:checked {
+checkbutton:checked, GtkCheckButton:checked {
     color: #3584E4;
 }
 
@@ -231,66 +244,100 @@ GtkCheckButton:checked {
 }
 
 /* ---- Search Entry ---- */
-.search-entry {
+entry.search, GtkSearchEntry, .search-entry {
     border: 1px solid #D8D6D3;
     border-radius: 8px;
     padding: 10px 12px;
+    background-image: none;
     background-color: #FFFFFF;
     color: #2E3436;
 }
 
 /* ---- GtkAssistant ---- */
-GtkAssistant button {
+assistant button, GtkAssistant button {
     border-radius: 8px;
     font-size: 13px;
     font-weight: 600;
+    background-image: none;
     background-color: #FFFFFF;
     color: #2E3436;
     border: 1px solid #D8D6D3;
 }
-GtkAssistant button:hover {
+assistant button:hover, GtkAssistant button:hover {
     background-color: #F0EFEE;
 }
 
 /* ---- Switch ---- */
-GtkSwitch.toggle {
+switch.toggle, switch, GtkSwitch.toggle {
     min-width: 44px;
     min-height: 24px;
+    background-image: none;
     background-color: #C7C5C2;
+    border: none;
+    border-radius: 12px;
+    box-shadow: none;
 }
-GtkSwitch.toggle:checked {
+switch.toggle:checked, switch:checked, GtkSwitch.toggle:checked {
+    background-image: none;
     background-color: #3584E4;
 }
 
+switch.toggle slider, switch slider, GtkSwitch.toggle slider {
+    min-width: 18px;
+    min-height: 18px;
+    background-image: none;
+    background-color: #FFFFFF;
+    border: none;
+    border-radius: 9px;
+    box-shadow: none;
+    margin: 3px;
+}
+
 /* ---- Entry Fields ---- */
-GtkEntry {
+entry, GtkEntry {
     border: 1px solid #D8D6D3;
     border-radius: 8px;
     padding: 10px 12px;
+    background-image: none;
     background-color: #FFFFFF;
     color: #2E3436;
     font-size: 13px;
     caret-color: #3584E4;
 }
-GtkEntry:focus {
+entry:focus, GtkEntry:focus {
     border-color: #3584E4;
 }
 
 /* ---- Banners ---- */
 .banner-warning {
+    background-image: none;
     background-color: #FFF8E5;
     border: 1px solid #E7C75D;
     border-radius: 10px;
 }
 .banner-error {
+    background-image: none;
     background-color: #FFE5E5;
     border: 1px solid #E01B24;
     border-radius: 10px;
 }
 .banner-info {
+    background-image: none;
     background-color: #D7E7FA;
     border: 1px solid #3584E4;
     border-radius: 10px;
+}
+
+.banner-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #2E3436;
+}
+
+.banner-body {
+    font-size: 12px;
+    font-weight: 400;
+    color: #6E6C68;
 }
 
 /* ---- Queue Row Thumbnail ---- */
@@ -325,33 +372,41 @@ GtkEntry:focus {
 
 /* ---- Log Viewer ---- */
 .log-viewer {
+    background-image: none;
     background-color: #F6F5F4;
     border-radius: 10px;
 }
-.log-viewer text {
-    background-color: #242424;
-    color: #E0E0E0;
-}
-.log-viewer GtkTextView {
+.log-viewer textview, .log-viewer text, .log-viewer GtkTextView {
+    background-image: none;
     background-color: #242424;
     color: #E0E0E0;
 }
 
 /* ---- Viewport (inside ScrolledWindow) ---- */
-GtkViewport {
+viewport, GtkViewport {
+    background-image: none;
     background-color: inherit;
 }
-.log-viewer GtkViewport {
+.log-viewer viewport, .log-viewer GtkViewport {
+    background-image: none;
     background-color: #F6F5F4;
 }
 
 /* ---- Dialogs ---- */
-GtkDialog {
+dialog, GtkDialog {
+    background-image: none;
     background-color: #F6F5F4;
 }
 
+.dialog-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #2E3436;
+}
+
 /* ---- Assistant (wizard) ---- */
-GtkAssistant {
+assistant, GtkAssistant {
+    background-image: none;
     background-color: #F6F5F4;
 }
 
@@ -401,11 +456,11 @@ GtkAssistant {
 }
 .body {
     font-size: 13px;
-    color: #4A4A4A;
+    color: #6E6C68;
 }
 .body-small {
     font-size: 11px;
-    color: #4A4A4A;
+    color: #6E6C68;
 }
 
 /* ---- Nested Box Styling ---- */

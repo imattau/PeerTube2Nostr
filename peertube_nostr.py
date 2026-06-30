@@ -164,6 +164,10 @@ class IngestedItem:
     account_name: Optional[str]
     account_url: Optional[str]
     published_ts: Optional[int]
+    thumbnail_url: Optional[str] = None
+    duration: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 
 class UrlNormaliser:
@@ -397,6 +401,10 @@ class Store:
         self._add_column("videos", "account_name", "TEXT")
         self._add_column("videos", "account_url", "TEXT")
         self._add_column("videos", "published_ts", "INTEGER")
+        self._add_column("videos", "thumbnail_url", "TEXT")
+        self._add_column("videos", "duration", "INTEGER")
+        self._add_column("videos", "width", "INTEGER")
+        self._add_column("videos", "height", "INTEGER")
 
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_watch_norm ON videos(watch_url_norm);")
@@ -860,9 +868,9 @@ class Store:
              peertube_base, peertube_video_id,
              peertube_instance, channel_name, channel_url, account_name, account_url,
              title, summary, hls_url, direct_url,
-             published_ts,
+             published_ts, thumbnail_url, duration, width, height,
              status, first_seen_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
                 item.source_id,
@@ -881,6 +889,10 @@ class Store:
                 item.hls_url,
                 item.mp4_url,
                 item.published_ts,
+                item.thumbnail_url,
+                item.duration,
+                item.width,
+                item.height,
                 ts,
             ),
         )
@@ -901,7 +913,8 @@ class Store:
         row = self.conn.execute(
             """
             SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
-                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url
+                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url,
+                   v.thumbnail_url, v.duration, v.width, v.height
             FROM videos v
             JOIN sources s ON s.id = v.source_id
             WHERE v.status='pending' AND s.enabled=1
@@ -914,6 +927,7 @@ class Store:
         keys = [
             "id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
             "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
+            "thumbnail_url", "duration", "width", "height",
         ]
         return dict(zip(keys, row))
 
@@ -923,7 +937,8 @@ class Store:
         rows = self.conn.execute(
             """
             SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
-                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url
+                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url,
+                   v.thumbnail_url, v.duration, v.width, v.height
             FROM videos v
             JOIN sources s ON s.id = v.source_id
             WHERE v.status='pending' AND s.enabled=1
@@ -938,6 +953,7 @@ class Store:
         keys = [
             "id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
             "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
+            "thumbnail_url", "duration", "width", "height",
         ]
         for row in rows:
             sid = int(row[1])
@@ -1223,7 +1239,7 @@ class IngestPipeline:
             title = title_fn(entry)
             summary = summary_fn(entry)
 
-            base, v_api_id, mp4, hls, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc = self.pt.enrich_video(watch_url)
+            base, v_api_id, mp4, hls, dur, w, h, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc, thumb = self.pt.enrich_video(watch_url)
             if api_title:
                 title = api_title
             if api_desc:
@@ -1245,6 +1261,10 @@ class IngestPipeline:
                 account_name=acc_name,
                 account_url=acc_url,
                 published_ts=published_ts,
+                thumbnail_url=thumb,
+                duration=dur,
+                width=w,
+                height=h,
             )
             self.store.insert_pending(item)
             inserted += 1
@@ -1296,23 +1316,29 @@ class PeerTubeClient:
     def enrich_video(self, watch_url: str) -> tuple:
         """
         Given a watch URL, call /api/v1/videos/{id} and extract:
-          base, video_id, mp4_url, hls_url, instance, channel_name, channel_url, account_name, account_url, api_title, api_desc
+          base, video_id, mp4_url, hls_url, duration, width, height,
+          instance, channel_name, channel_url, account_name, account_url,
+          api_title, api_desc, thumbnail_url
         """
         x = self.n.extract_watch_id(watch_url)
         if not x:
-            return None, None, None, None, None, None, None, None, None, None, None
+            return (None,) * 15
 
         base, vid = x
         v = self._get_json(f"{base}/api/v1/videos/{vid}")
         if not isinstance(v, dict):
-            return base, vid, None, None, None, None, None, None, None, None, None
+            return (base, vid) + (None,) * 13
 
         hls = self._pick_hls_url(v)
-        mp4 = self._pick_best_mp4_url(v)
+        mp4, w, h = self._pick_best_mp4(v)
+        duration = v.get("duration")
         instance, channel_name, channel_url, account_name, account_url = self._extract_attribution(base, v)
         api_title = (v.get("name") or "").strip() or None
         api_desc = (v.get("description") or "").strip() or None
-        return base, vid, mp4, hls, instance, channel_name, channel_url, account_name, account_url, api_title, api_desc
+        thumb = v.get("thumbnailPath")
+        if thumb and not thumb.startswith("http"):
+            thumb = f"{base}{thumb}"
+        return base, vid, mp4, hls, duration, w, h, instance, channel_name, channel_url, account_name, account_url, api_title, api_desc, thumb
 
     @staticmethod
     def _pick_hls_url(v: dict) -> Optional[str]:
@@ -1334,7 +1360,7 @@ class PeerTubeClient:
         return None
 
     @staticmethod
-    def _pick_best_mp4_url(v: dict) -> Optional[str]:
+    def _pick_best_mp4(v: dict) -> tuple[Optional[str], Optional[int], Optional[int]]:
         candidates = []
 
         def consider_file(f: dict) -> None:
@@ -1348,8 +1374,7 @@ class PeerTubeClient:
             res = f.get("resolution") or {}
             height = int(res.get("height") or 0)
             width = int(res.get("width") or 0)
-            score = (height * width, size)
-            candidates.append((height, score, fu))
+            candidates.append((height, width, size, fu))
 
         for f in (v.get("files") or []):
             consider_file(f)
@@ -1358,22 +1383,18 @@ class PeerTubeClient:
                 consider_file(f)
 
         if not candidates:
-            return None
-        # Prefer a "sensible middle" size: highest <= 720p if available,
-        # otherwise the smallest above 720p, else the largest available.
-        by_height = []
-        for (height, score, url) in candidates:
-            by_height.append((height, score[1], url))
-        with_height = [c for c in by_height if c[0] > 0]
+            return (None, None, None)
+        with_height = [c for c in candidates if c[0] > 0]
         if with_height:
             under = [c for c in with_height if c[0] <= 720]
             if under:
-                under.sort(reverse=True, key=lambda x: (x[0], x[1]))
-                return under[0][2]
-            over = sorted(with_height, key=lambda x: (x[0], x[1]))
-            return over[0][2]
-        candidates.sort(reverse=True, key=lambda x: x[1])
-        return candidates[0][2]
+                under.sort(reverse=True, key=lambda x: (x[0], x[2]))
+                _, w, _, url = under[0]
+                return (url, w, under[0][0])
+            over = sorted(with_height, key=lambda x: (x[0], x[2]))
+            return (over[0][3], over[0][1], over[0][0])
+        candidates.sort(reverse=True, key=lambda x: x[2])
+        return (candidates[0][3], candidates[0][1], candidates[0][0])
 
     @staticmethod
     def _extract_attribution(base: str, v: dict) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
@@ -1397,86 +1418,74 @@ class PeerTubeClient:
 class NostrPublisher:
     @staticmethod
     def _build_content(p: dict) -> str:
-        title = (p.get("title") or "").strip()
-        summary = (p.get("summary") or "").strip()
-        watch = (p.get("watch_url") or "").strip()
-        mp4 = p.get("direct_url")
-        hls = p.get("hls_url")
-
-        channel_name = p.get("channel_name") or p.get("account_name")
-        channel_url = p.get("channel_url") or p.get("account_url")
-
-        lines = []
-        if title:
-            lines.append(title)
-        if channel_name:
-            lines.append(f"By: {str(channel_name).strip()}")
-        if channel_url:
-            lines.append(f"Channel: {str(channel_url).strip()}")
-
-        lines.append("")
-
-        # MP4 first
-        if mp4:
-            lines.append(str(mp4).strip())
-        if hls and hls != mp4:
-            lines.append(str(hls).strip())
-        if watch:
-            lines.append(watch)
-
-        if summary:
-            lines.append("")
-            lines.append(summary)
-
-        return "\n".join(lines).strip()
+        return (p.get("summary") or "").strip()
 
     @staticmethod
-    def _build_tags(p: dict) -> list[list[str]]:
-        tags: list[list[str]] = [["t", "video"], ["t", "peertube"]]
-
-        watch_url = p.get("watch_url")
-        channel_url = p.get("channel_url")
+    def _build_tags(p: dict) -> tuple[int, list[list[str]]]:
         title = (p.get("title") or "").strip()
         author = (p.get("channel_name") or p.get("account_name") or "unknown").strip()
-
         mp4 = p.get("direct_url")
         hls = p.get("hls_url")
+        thumb = p.get("thumbnail_url")
+        duration = p.get("duration")
+        w = p.get("width")
+        h = p.get("height")
+        watch_url = p.get("watch_url")
+        channel_url = p.get("channel_url")
+        published_ts = p.get("published_ts")
+        peertube_instance = p.get("peertube_instance")
+        peertube_video_id = p.get("peertube_video_id")
+
+        kind = 22 if (h and w and h > w) else 21
+
+        tags: list[list[str]] = []
+
+        if title:
+            tags.append(["title", title])
+        if published_ts:
+            tags.append(["published_at", str(published_ts)])
+
+        def add_imeta(url: str, mime: str) -> None:
+            imeta = ["imeta", f"url {url}", f"m {mime}"]
+            if thumb:
+                imeta.append(f"image {thumb}")
+            if duration:
+                imeta.append(f"duration {duration}")
+            if w and h:
+                imeta.append(f"dim {w}x{h}")
+            tags.append(imeta)
 
         if mp4:
-            tags.append(["url", str(mp4)])
-            tags.append(["m", "video/mp4"])
-        elif hls:
-            tags.append(["url", str(hls)])
-            tags.append(["m", "application/x-mpegURL"])
+            add_imeta(str(mp4), "video/mp4")
+        if hls:
+            add_imeta(str(hls), "application/x-mpegURL")
 
+        tags.append(["t", "video"])
+        tags.append(["t", "peertube"])
         if watch_url:
             tags.append(["r", str(watch_url)])
         if channel_url:
             tags.append(["r", str(channel_url)])
-
-        if title:
+        if title and author:
             tags.append(["alt", f"PeerTube video: {title} by {author}"])
+        if peertube_video_id and watch_url:
+            tags.append(["origin", "peertube", str(peertube_video_id), str(watch_url)])
+        if peertube_instance:
+            tags.append(["peertube:instance", str(peertube_instance)])
 
-        if p.get("peertube_instance"):
-            tags.append(["peertube:instance", str(p["peertube_instance"])])
-        if p.get("channel_name"):
-            tags.append(["peertube:author", str(p["channel_name"])])
-        if p.get("channel_url"):
-            tags.append(["peertube:channel", str(p["channel_url"])])
-
-        return tags
+        return kind, tags
 
     @staticmethod
-    def publish(nsec: str, relays: list[str], content: str, tags: list[list[str]]) -> str:
+    def publish(nsec: str, relays: list[str], content: str, kind: int, tags: list[list[str]]) -> str:
         priv = PrivateKey.from_nsec(nsec)
         pub_hex = priv.public_key.hex()
         try:
-            ev = Event(kind=1, public_key=pub_hex, content=content, tags=tags)
+            ev = Event(kind=kind, public_key=pub_hex, content=content, tags=tags)
         except TypeError:
             try:
-                ev = Event(kind=1, pubkey=pub_hex, content=content, tags=tags)
+                ev = Event(kind=kind, pubkey=pub_hex, content=content, tags=tags)
             except TypeError:
-                ev = Event(content=content, kind=1, tags=tags)
+                ev = Event(content=content, kind=kind, tags=tags)
                 if hasattr(ev, "pub_key"):
                     setattr(ev, "pub_key", pub_hex)
                 elif hasattr(ev, "public_key"):
@@ -1668,7 +1677,7 @@ class Runner:
             return
 
         content = self.pub._build_content(pending)
-        tags = self.pub._build_tags(pending)
+        kind, tags = self.pub._build_tags(pending)
 
         if self.dry_run:
             self._log(f"[DRY-RUN] Would publish: {pending.get('title') or pending.get('watch_url')}")
@@ -1678,7 +1687,7 @@ class Runner:
             return
 
         try:
-            eid = self.pub.publish(nsec=nsec, relays=relays, content=content, tags=tags)
+            eid = self.pub.publish(nsec=nsec, relays=relays, content=content, kind=kind, tags=tags)
             self.store.mark_posted(pending["id"], eid)
             for r in relays:
                 self.store.mark_relay_used(r, None)

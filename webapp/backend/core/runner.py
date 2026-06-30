@@ -116,7 +116,8 @@ class Runner:
             pending = self.store.next_pending_eligible(self.n.now_ts(), self.store.get_daily_source_limit())
         if not pending: return False
         try:
-            eid = self.pub.publish(nsec, relays, self.pub._build_content(pending), self.pub._build_tags(pending))
+            kind, tags = self.pub._build_tags(pending)
+            eid = self.pub.publish(nsec, relays, self.pub._build_content(pending), kind, tags)
             self.store.mark_posted(pending["id"], eid)
             for r in relays: self.store.mark_relay_used(r, None)
             self.log_fn(f"Published {eid} | {pending.get('title') or pending.get('watch_url')}")

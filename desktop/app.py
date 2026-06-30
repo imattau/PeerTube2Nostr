@@ -7,6 +7,7 @@ gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, Gio, Gdk, GLib
 
 from desktop.core import Store, UrlNormaliser
+from desktop.manager import DesktopAppManager
 
 
 def _default_db_path() -> str:
@@ -23,6 +24,7 @@ class PeerTube2NostrApp(Gtk.Application):
             flags=Gio.ApplicationFlags.FLAGS_NONE,
         )
         self.store: Store | None = None
+        self.manager: DesktopAppManager | None = None
         self.window: Gtk.ApplicationWindow | None = None
 
     def do_startup(self):
@@ -43,7 +45,7 @@ class PeerTube2NostrApp(Gtk.Application):
                 )
 
         quit_action = Gio.SimpleAction.new('quit', None)
-        quit_action.connect('activate', lambda *_: self.quit())
+        quit_action.connect('activate', lambda *_: self._on_quit())
         self.add_action(quit_action)
         self.set_accels_for_action('app.quit', ['<Primary>q'])
 
@@ -57,6 +59,8 @@ class PeerTube2NostrApp(Gtk.Application):
         try:
             self.store = Store(db_path, normaliser)
             self.store.init_schema()
+            self.store.seed_default_relays_if_empty()
+            self.manager = DesktopAppManager(self.store)
         except Exception as e:
             dialog = Gtk.MessageDialog(
                 transient_for=None,
@@ -90,11 +94,18 @@ class PeerTube2NostrApp(Gtk.Application):
         wizard.destroy()
         return False
 
+    def _on_quit(self):
+        if self.manager:
+            self.manager.stop()
+        self.quit()
+
     def _show_main_window(self):
         from desktop.window import MainWindow
         self.window = MainWindow(application=self, store=self.store)
         self.add_window(self.window)
         self.window.show_all()
+        if self.manager:
+            self.manager.start()
 
 
 def main():

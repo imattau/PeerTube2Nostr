@@ -12,6 +12,7 @@ except Exception:
 
 
 KEYRING_SERVICE = "peertube_nostr"
+DEFAULT_RELAYS = ["wss://relay.damus.io", "wss://nos.lol"]
 
 
 def _keyring_available() -> bool:
@@ -123,6 +124,9 @@ class Store:
         self._add_column("videos", "account_name", "TEXT")
         self._add_column("videos", "account_url", "TEXT")
         self._add_column("videos", "published_ts", "INTEGER")
+        self._add_column("videos", "duration", "INTEGER")
+        self._add_column("videos", "width", "INTEGER")
+        self._add_column("videos", "height", "INTEGER")
 
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_watch_norm ON videos(watch_url_norm);")
@@ -210,6 +214,19 @@ class Store:
         cur = self.conn.execute("SELECT relay_url FROM relays WHERE enabled=1 ORDER BY id ASC")
         return [row[0] for row in cur.fetchall()]
 
+    def seed_default_relays_if_empty(self) -> None:
+        cur = self.conn.execute("SELECT COUNT(*) FROM relays")
+        if int(cur.fetchone()[0]) > 0:
+            return
+        ts = self.n.now_ts()
+        for r in DEFAULT_RELAYS:
+            norm = self.n.normalise_relay_url(r)
+            self.conn.execute(
+                "INSERT OR IGNORE INTO relays(relay_url, relay_url_norm, enabled, created_ts) VALUES (?, ?, 1, ?)",
+                (r, norm, ts),
+            )
+        self.conn.commit()
+
     def mark_relay_used(self, relay_url: str, error: Optional[str]) -> None:
         ts = self.n.now_ts()
         try:
@@ -217,7 +234,7 @@ class Store:
         except Exception:
             norm = None
         self.conn.execute(
-            "UPDATE relays SET last_used_ts=?, last_error=? WHERE relay_url_norm=? OR relay_url=?",
+            "UPDATE relays SET last_used_ts=?, last_error=?, latency_ms=NULL WHERE relay_url_norm=? OR relay_url=?",
             (ts, (error[:1000] if error else None), norm, relay_url),
         )
         self.conn.commit()
@@ -228,7 +245,7 @@ class Store:
         except Exception:
             norm = None
         self.conn.execute(
-            "UPDATE relays SET latency_ms=? WHERE relay_url_norm=? OR relay_url=?",
+            "UPDATE relays SET latency_ms=?, last_error=NULL WHERE relay_url_norm=? OR relay_url=?",
             (latency_ms, norm, relay_url),
         )
         self.conn.commit()
@@ -343,13 +360,15 @@ class Store:
             INSERT OR IGNORE INTO videos
             (source_id, entry_key, watch_url, watch_url_norm, peertube_base, peertube_video_id,
              peertube_instance, channel_name, channel_url, account_name, account_url,
-             title, summary, hls_url, direct_url, thumbnail_url, published_ts, status, first_seen_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+             title, summary, hls_url, direct_url, thumbnail_url, published_ts,
+             duration, width, height, status, first_seen_ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (item.source_id, item.entry_key, item.watch_url, self.n.normalise_watch_url(item.watch_url),
              item.peertube_base, item.peertube_video_id, item.peertube_instance, item.channel_name,
              item.channel_url, item.account_name, item.account_url, item.title, item.summary,
-             item.hls_url, item.mp4_url, item.thumbnail_url, item.published_ts, ts)
+             item.hls_url, item.mp4_url, item.thumbnail_url, item.published_ts,
+             item.duration, item.width, item.height, ts)
         )
         self.conn.commit()
 
@@ -362,7 +381,8 @@ class Store:
             """
             SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
                    v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url,
-                   v.thumbnail_url, v.status, v.first_seen_ts, v.published_ts, v.error, v.nostr_event_id
+                   v.thumbnail_url, v.status, v.first_seen_ts, v.published_ts,
+                   v.duration, v.width, v.height, v.error, v.nostr_event_id
             FROM videos v
             WHERE v.status=?
             ORDER BY COALESCE(v.published_ts, v.first_seen_ts) DESC
@@ -372,14 +392,16 @@ class Store:
         )
         columns = ["id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
                    "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
-                   "thumbnail_url", "status", "first_seen_ts", "published_ts", "error", "nostr_event_id"]
+                   "thumbnail_url", "status", "first_seen_ts", "published_ts",
+                   "duration", "width", "height", "error", "nostr_event_id"]
         return [dict(zip(columns, row)) for row in cur.fetchall()]
 
     def next_pending_eligible(self, now_ts: int, max_per_day_per_source: int) -> Optional[dict]:
         cur = self.conn.execute(
             """
             SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
-                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url, v.thumbnail_url
+                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url,
+                   v.thumbnail_url, v.duration, v.width, v.height, v.published_ts
             FROM videos v JOIN sources s ON s.id = v.source_id
             WHERE v.status='pending' AND s.enabled=1
             ORDER BY (v.published_ts IS NULL) ASC, v.published_ts ASC, v.first_seen_ts ASC LIMIT 200
@@ -387,7 +409,9 @@ class Store:
         )
         rows = cur.fetchall()
         if not rows: return None
-        keys = ["id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url", "peertube_instance", "channel_name", "channel_url", "account_name", "account_url", "thumbnail_url"]
+        keys = ["id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
+                "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
+                "thumbnail_url", "duration", "width", "height", "published_ts"]
         
         # Check daily limits
         counts_cur = self.conn.execute("SELECT source_id, COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ? GROUP BY source_id", (now_ts - 86400,))

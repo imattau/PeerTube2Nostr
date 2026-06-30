@@ -45,7 +45,7 @@ class DesktopAppManager:
             self._error_state = 'init_failed'
 
     def start(self):
-        if self._running or not self._runner:
+        if self._running:
             return
         self._running = True
         self._stop_event.clear()
@@ -71,16 +71,35 @@ class DesktopAppManager:
     def get_logs(self, max_lines: int = 100) -> list[str]:
         return self._log_buffer[-max_lines:]
 
+    def _check_relays_health(self) -> None:
+        relays = self._store.get_enabled_relays()
+        for r in relays:
+            start = time.time()
+            try:
+                from pynostr.relay_manager import RelayManager
+                rm = RelayManager(timeout=5)
+                rm.add_relay(r)
+                rm.open_connections()
+                latency = int((time.time() - start) * 1000)
+                try:
+                    rm.close_connections()
+                except Exception:
+                    pass
+                self._store.update_relay_latency(r, latency)
+            except Exception as e:
+                self._store.mark_relay_used(r, str(e))
+
     def _run_loop(self):
         while not self._stop_event.is_set():
             try:
+                self._check_relays_health()
+
                 if not self._runner:
                     time.sleep(5)
                     continue
 
                 self._runner.ingest_sources_once()
                 self._runner.publish_one_pending()
-                self._runner.check_relays_health()
 
                 metrics = self._store.get_metrics()
                 if isinstance(metrics, dict):
