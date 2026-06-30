@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import axios from 'axios'
 import type { AxiosInstance } from 'axios'
 
+const DEFAULT_API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+
 interface AppState {
   metrics: any
   logs: string[]
@@ -15,24 +17,27 @@ interface AppState {
 }
 
 export const useAppStore = defineStore('app', {
-  state: (): AppState => ({
-    metrics: {},
-    logs: [],
-    sources: [],
-    relays: [],
-    queue: [],
-    loading: false,
-    isSetupComplete: false,
-    apiKey: localStorage.getItem('api_key') || '',
-    api: axios.create({
-      baseURL: 'http://localhost:8000/api',
-      headers: localStorage.getItem('api_key') ? { 'X-API-Key': localStorage.getItem('api_key') } : {}
-    })
-  }),
+  state: (): AppState => {
+    const storedKey = localStorage.getItem('api_key') || ''
+    return {
+      metrics: {},
+      logs: [],
+      sources: [],
+      relays: [],
+      queue: [],
+      loading: false,
+      isSetupComplete: false,
+      apiKey: storedKey,
+      api: axios.create({
+        baseURL: DEFAULT_API_BASE,
+        headers: storedKey ? { 'X-API-Key': storedKey } : {}
+      })
+    }
+  },
   actions: {
     _updateApiInstance() {
       this.api = axios.create({
-        baseURL: 'http://localhost:8000/api',
+        baseURL: DEFAULT_API_BASE,
         headers: this.apiKey ? { 'X-API-Key': this.apiKey } : {}
       })
     },

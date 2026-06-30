@@ -93,9 +93,18 @@ class IngestPipeline:
             key = str(entry_key_fn(entry) or "")
             watch = watch_url_fn(entry)
             if not key or not watch: continue
-            
+
             pub_ts = published_ts_fn(entry)
-            
+
+            if self.store.video_exists(source_id, key):
+                if pub_ts:
+                    self.store.update_published_ts_if_null(source_id, key, pub_ts)
+                continue
+
+            if cutoff_ts and pub_ts and pub_ts < cutoff_ts:
+                skipped += 1
+                continue
+
             base, vid, mp4, hls, inst, ch_n, ch_u, acc_n, acc_u, api_t, api_s, thumb = self.pt.enrich_video(watch)
             item = IngestedItem(
                 source_id=source_id, entry_key=key, watch_url=watch, title=api_t or title_fn(entry), 

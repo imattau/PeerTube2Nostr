@@ -295,7 +295,7 @@ class Store:
 
     def mark_source_polled(self, source_id: int, error: Optional[str]) -> None:
         ts = self.n.now_ts()
-        self.conn.execute("UPDATE sources SET last_polled_ts=?, last_error=? WHERE id=?", (ts, error, source_id))
+        self.conn.execute("UPDATE sources SET last_polled_ts=?, last_error=? WHERE id=?", (ts, (error[:1000] if error else None), source_id))
         self.conn.commit()
 
     # Videos

@@ -1,14 +1,29 @@
 import pytest
+import os
+import tempfile
 from fastapi.testclient import TestClient
 from ..main import app, manager
-import os
+from ..core.utils import UrlNormaliser
+from ..core.database import Store
 
 @pytest.fixture
 def client():
-    # Force a known API Key for testing
-    manager.api_key = "test-secret-key"
+    # Use an isolated temp DB so tests don't share state
+    old_db = manager.db_path
+    old_store = manager.store
+    db_fd, db_path = tempfile.mkstemp(suffix='.db')
+    os.close(db_fd)
+    manager.db_path = db_path
+    manager.n = UrlNormaliser()
+    manager.store = Store(db_path, manager.n)
+    manager.store.init_schema()
+    manager.store.set_setting("api_key", "test-secret-key")
+    manager.store.set_setting("setup_complete", "1")
     with TestClient(app) as c:
         yield c
+    os.unlink(db_path)
+    manager.db_path = old_db
+    manager.store = old_store
 
 def test_unauthorized_access(client):
     response = client.get("/api/metrics")

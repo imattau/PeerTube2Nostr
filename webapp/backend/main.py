@@ -30,13 +30,6 @@ async def verify_setup_token(token: str, background_tasks: BackgroundTasks):
     # Mark setup as complete after the request is finished
     background_tasks.add_task(manager.complete_setup)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 @app.on_event("startup")
 async def startup_event():
     manager.start_background_task()

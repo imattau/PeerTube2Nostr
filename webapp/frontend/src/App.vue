@@ -33,11 +33,13 @@ const handleModalSubmit = async () => {
 }
 
 let pollInterval: any
+const POLL_INTERVAL_MS = 15000
 onMounted(async () => {
   await store.fetchSetupStatus()
   if (store.isSetupComplete) {
     store.fetchAll()
-    pollInterval = setInterval(() => { store.fetchAll(); store.fetchLogs() }, 5000)
+    const poll = () => { if (!document.hidden) { store.fetchAll(); store.fetchLogs() } }
+    pollInterval = setInterval(poll, POLL_INTERVAL_MS)
   }
 })
 onUnmounted(() => clearInterval(pollInterval))

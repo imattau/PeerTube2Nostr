@@ -8,4 +8,4 @@ services:
     environment:
       DB_PATH: /data/peertube2nostr.db
       NSEC_FILE: /data/peertube2nostr.db.nsec
-    command: ["run"]
+    command: ["interactive"]

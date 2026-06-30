@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 PeerTube -> Nostr publisher (single file, classes, SQLite)
+
 Primary ingest = PeerTube API (channel videos)
 Fallback ingest = RSS/Atom feed (if API fails or not configured)
 
@@ -26,8 +27,10 @@ Examples
   # Or add RSS-only source (will rely on RSS listing)
   python peertube_nostr.py add-rss "https://example.tube/feeds/videos.xml?channelId=123" --db peertube.db
 
-  NOSTR_NSEC="nsec1..." python peertube_nostr.py run --db peertube.db
+   NOSTR_NSEC="nsec1..." python peertube_nostr.py run --db peertube.db
 """
+
+__version__ = "0.0.2"
 
 import argparse
 import calendar
@@ -623,27 +626,29 @@ class Store:
             raise RuntimeError("Failed to add RSS source")
         return int(row[0])
 
-    def set_source_rss(self, source_id: int, rss_url: str) -> None:
+    def set_source_rss(self, source_id: int, rss_url: str) -> int:
         raw = (rss_url or "").strip()
         rss_norm = self.n.normalise_feed_url(raw)
-        self.conn.execute(
+        cur = self.conn.execute(
             "UPDATE sources SET rss_url=?, rss_url_norm=? WHERE id=?",
             (raw, rss_norm, source_id),
         )
         self.conn.commit()
+        return cur.rowcount
 
-    def clear_source_rss(self, source_id: int) -> None:
-        self.conn.execute(
+    def clear_source_rss(self, source_id: int) -> int:
+        cur = self.conn.execute(
             "UPDATE sources SET rss_url=NULL, rss_url_norm=NULL WHERE id=?",
             (source_id,),
         )
         self.conn.commit()
+        return cur.rowcount
 
-    def set_source_channel(self, source_id: int, channel_url: str) -> None:
+    def set_source_channel(self, source_id: int, channel_url: str) -> int:
         base, channel = self.n.extract_channel_ref(channel_url)
         base_norm = self.n.normalise_http_url(base)
         chan_url_norm = self.n.normalise_http_url(channel_url)
-        self.conn.execute(
+        cur = self.conn.execute(
             """
             UPDATE sources
             SET api_base=?, api_base_norm=?, api_channel=?, api_channel_url=?, api_channel_url_norm=?
@@ -652,9 +657,10 @@ class Store:
             (base, base_norm, channel, channel_url, chan_url_norm, source_id),
         )
         self.conn.commit()
+        return cur.rowcount
 
-    def clear_source_channel(self, source_id: int) -> None:
-        self.conn.execute(
+    def clear_source_channel(self, source_id: int) -> int:
+        cur = self.conn.execute(
             """
             UPDATE sources
             SET api_base=NULL, api_base_norm=NULL, api_channel=NULL, api_channel_url=NULL, api_channel_url_norm=NULL
@@ -663,6 +669,7 @@ class Store:
             (source_id,),
         )
         self.conn.commit()
+        return cur.rowcount
 
     def set_source_enabled(self, source_id: int, enabled: bool) -> int:
         val = 1 if enabled else 0
@@ -731,12 +738,13 @@ class Store:
             )
         return out
 
-    def set_source_lookback(self, source_id: int, lookback_days: Optional[int]) -> None:
-        self.conn.execute(
+    def set_source_lookback(self, source_id: int, lookback_days: Optional[int]) -> int:
+        cur = self.conn.execute(
             "UPDATE sources SET lookback_days=? WHERE id=?",
             (lookback_days, source_id),
         )
         self.conn.commit()
+        return cur.rowcount
 
     def mark_source_polled(self, source_id: int, error: Optional[str]) -> None:
         ts = self.n.now_ts()
@@ -1285,8 +1293,7 @@ class PeerTubeClient:
         # oldest first for stable inserts
         return list(reversed(entries))
 
-    def enrich_video(self, watch_url: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]:
-        ]:
+    def enrich_video(self, watch_url: str) -> tuple:
         """
         Given a watch URL, call /api/v1/videos/{id} and extract:
           base, video_id, mp4_url, hls_url, instance, channel_name, channel_url, account_name, account_url, api_title, api_desc
@@ -1504,6 +1511,7 @@ class Runner:
         n: UrlNormaliser,
         log_fn: Optional[callable] = None,
         status_fn: Optional[callable] = None,
+        dry_run: bool = False,
     ) -> None:
         self.store = store
         self.pt = pt
@@ -1511,6 +1519,7 @@ class Runner:
         self.n = n
         self.log_fn = log_fn
         self.status_fn = status_fn
+        self.dry_run = dry_run
         self.ingest = IngestPipeline(store, pt, n, self._log)
 
     def _log(self, msg: str) -> None:
@@ -1661,6 +1670,13 @@ class Runner:
         content = self.pub._build_content(pending)
         tags = self.pub._build_tags(pending)
 
+        if self.dry_run:
+            self._log(f"[DRY-RUN] Would publish: {pending.get('title') or pending.get('watch_url')}")
+            self._log(f"[DRY-RUN] Content:\n{content}")
+            self._log(f"[DRY-RUN] Tags: {tags}")
+            self._log(f"[DRY-RUN] Relays: {relays}")
+            return
+
         try:
             eid = self.pub.publish(nsec=nsec, relays=relays, content=content, tags=tags)
             self.store.mark_posted(pending["id"], eid)
@@ -1773,23 +1789,44 @@ class Runner:
                 _sleep_interruptible(poll_seconds, stop_event)
 
 
+def _format_table(headers: list[str], rows: list[list[str]], col_sep: str = "  ") -> list[str]:
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, val in enumerate(row):
+            if i < len(widths):
+                widths[i] = max(widths[i], len(val))
+    out: list[str] = []
+    header = col_sep.join(h.ljust(widths[i]) for i, h in enumerate(headers))
+    out.append(header)
+    out.append("-" * len(header))
+    for row in rows:
+        padded = []
+        for i, val in enumerate(row):
+            if i < len(widths):
+                padded.append(val.ljust(widths[i]))
+        out.append(col_sep.join(padded))
+    return out
+
+
 def parse_cli() -> argparse.Namespace:
     argv = sys.argv[1:]
-    if "--db" in argv:
-        idx = argv.index("--db")
-        if idx < len(argv) - 1:
-            db_args = argv[idx:idx + 2]
-            del argv[idx:idx + 2]
-            argv = db_args + argv
-    else:
-        for i, arg in enumerate(list(argv)):
-            if arg.startswith("--db="):
-                db_arg = argv.pop(i)
-                argv = [db_arg] + argv
-                break
+    db_value = os.environ.get("DB_PATH", "peertube2nostr.db")
+    filtered_argv: list[str] = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--db" and i + 1 < len(argv):
+            db_value = argv[i + 1]
+            i += 2
+        elif argv[i].startswith("--db="):
+            db_value = argv[i][5:]
+            i += 1
+        else:
+            filtered_argv.append(argv[i])
+            i += 1
 
     p = argparse.ArgumentParser(description="PeerTube channel videos -> Nostr (API primary, RSS fallback)")
-    p.add_argument("--db", default=os.environ.get("DB_PATH", "peertube_to_nostr.db"))
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    p.add_argument("--db", default=db_value)
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -1873,6 +1910,7 @@ def parse_cli() -> argparse.Namespace:
     s.add_argument("--retry-failed-after-seconds", type=int, default=int(os.environ.get("RETRY_FAILED_AFTER_SECONDS", "3600")))
     s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
     s.add_argument("--new-source-lookback-days", type=int, default=int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30")))
+    s.add_argument("--dry-run", action="store_true", help="Preview what would be published without sending to relays")
     s.set_defaults(cmd="run")
 
     s = sub.add_parser("interactive", help="Run with an interactive CLI to manage sources/relays/nsec")
@@ -1883,6 +1921,7 @@ def parse_cli() -> argparse.Namespace:
     s.add_argument("--retry-failed-after-seconds", type=int, default=int(os.environ.get("RETRY_FAILED_AFTER_SECONDS", "3600")))
     s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
     s.add_argument("--new-source-lookback-days", type=int, default=int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30")))
+    s.add_argument("--dry-run", action="store_true", help="Preview what would be published without sending to relays")
     s.set_defaults(cmd="interactive")
 
     s = sub.add_parser("sync-profile", help="Sync profile metadata + NIP-65 relay list from relays")
@@ -1897,6 +1936,7 @@ def parse_cli() -> argparse.Namespace:
     s = sub.add_parser("refresh", help="Ingest sources once (manual refresh)")
     s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
     s.add_argument("--new-source-lookback-days", type=int, default=int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30")))
+    s.add_argument("--dry-run", action="store_true", help="Preview what would be published without sending to relays")
     s.set_defaults(cmd="refresh")
 
     s = sub.add_parser("repair-db", help="Repair/normalise DB fields after updates")
@@ -1924,7 +1964,11 @@ def parse_cli() -> argparse.Namespace:
 
     sub.add_parser("clear-nsec", help="Remove stored nsec from OS keyring for this DB path").set_defaults(cmd="clear-nsec")
 
-    return p.parse_args(argv)
+    s = sub.add_parser("completions", help="Generate shell completion script (bash/zsh)")
+    s.add_argument("shell", nargs="?", default="bash", choices=["bash", "zsh"])
+    s.set_defaults(cmd="completions")
+
+    return p.parse_args(filtered_argv)
 
 
 def main() -> None:
@@ -1961,12 +2005,18 @@ def main() -> None:
             rss_norm = n.normalise_feed_url(args.rss_url)
             if not n.looks_like_peertube_feed(rss_norm):
                 print("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
-            store.set_source_rss(args.source_id, args.rss_url)
+            c = store.set_source_rss(args.source_id, args.rss_url)
+            if not c:
+                print(f"Source {args.source_id} not found.")
+                return
             print(f"Set RSS fallback for source {args.source_id} (canonical: {rss_norm})")
             return
 
         if args.cmd == "set-channel":
-            store.set_source_channel(args.source_id, args.channel_url)
+            c = store.set_source_channel(args.source_id, args.channel_url)
+            if not c:
+                print(f"Source {args.source_id} not found.")
+                return
             print(f"Set channel URL for source {args.source_id}")
             return
 
@@ -1990,8 +2040,8 @@ def main() -> None:
             if not rows:
                 print("No sources.")
                 return
-            print("id\tenabled\tapi_base\tapi_channel\trss_url\tlookback\tlast_status\tlast_polled\tlast_error")
-            for (sid, enabled, api_base, api_channel, api_channel_url, rss_url, lookback_days, last_polled_ts, last_error) in rows:
+            table_rows: list[list[str]] = []
+            for (sid, enabled, api_base, api_channel, _api_channel_url, rss_url, lookback_days, last_polled_ts, last_error) in rows:
                 lp = str(last_polled_ts) if last_polled_ts else "-"
                 lb = str(lookback_days) if lookback_days is not None else "-"
                 if last_polled_ts:
@@ -2001,8 +2051,12 @@ def main() -> None:
                 le = (last_error or "").replace("\n", " ")
                 if len(le) > 80:
                     le = le[:77] + "..."
-                api = f"{api_base or ''} {api_channel or ''}".strip()
-                print(f"{sid}\t{enabled}\t{api}\t{rss_url or ''}\t{lb}\t{status}\t{lp}\t{le}")
+                table_rows.append([str(sid), str(enabled), api_base or "", api_channel or "", rss_url or "", lb, status, lp, le])
+            for line in _format_table(
+                ["id", "enabled", "api_base", "api_channel", "rss_url", "lookback", "last_status", "last_polled", "last_error"],
+                table_rows,
+            ):
+                print(line)
             return
 
         if args.cmd == "add-relay":
@@ -2027,14 +2081,20 @@ def main() -> None:
         if args.cmd == "set-source-lookback":
             val = str(args.lookback_days).strip().lower()
             if val in ("none", "null", "off"):
-                store.set_source_lookback(args.source_id, None)
+                c = store.set_source_lookback(args.source_id, None)
+                if not c:
+                    print(f"Source {args.source_id} not found.")
+                    return
                 print(f"Cleared lookback for source {args.source_id}")
                 return
             try:
                 days = int(val)
             except ValueError:
                 raise SystemExit("lookback_days must be an integer or 'none'")
-            store.set_source_lookback(args.source_id, days)
+            c = store.set_source_lookback(args.source_id, days)
+            if not c:
+                print(f"Source {args.source_id} not found.")
+                return
             print(f"Set lookback_days={days} for source {args.source_id}")
             return
 
@@ -2053,19 +2113,28 @@ def main() -> None:
             if not rows:
                 print("No relays.")
                 return
-            print("id\tenabled\trelay_url\tcanonical\tlast_used\tlast_error")
+            table_rows: list[list[str]] = []
             for (rid, enabled, url, url_norm, last_used_ts, last_error) in rows:
                 lu = str(last_used_ts) if last_used_ts else "-"
                 le = (last_error or "").replace("\n", " ")
                 if len(le) > 80:
                     le = le[:77] + "..."
-                print(f"{rid}\t{enabled}\t{url}\t{url_norm}\t{lu}\t{le}")
+                table_rows.append([str(rid), str(enabled), url, url_norm, lu, le])
+            for line in _format_table(
+                ["id", "enabled", "relay_url", "canonical", "last_used", "last_error"],
+                table_rows,
+            ):
+                print(line)
             return
 
         if args.cmd in ("run", "interactive"):
             store.seed_default_relays_if_empty()
 
-            nsec_env = os.environ.get("NOSTR_NSEC") or args.nsec
+            nsec_env = os.environ.get("NOSTR_NSEC")
+            if args.nsec and not nsec_env:
+                print("Warning: passing --nsec on the command line is insecure (visible in process list).")
+                print("Use NOSTR_NSEC env var instead, or run 'set-nsec' to store it securely.")
+            nsec_env = nsec_env or args.nsec
             nsec = nsec_env or get_stored_nsec(args.db)
             if args.cmd == "run" and not nsec:
                 raise SystemExit("Provide nsec via --nsec or NOSTR_NSEC, or run set-nsec to store it.")
@@ -2093,7 +2162,7 @@ def main() -> None:
                     retry=retry,
                 )
             else:
-                runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n, status_fn=_set_runtime_status)
+                runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n, status_fn=_set_runtime_status, dry_run=args.dry_run)
                 runner.run(
                     nsec=nsec_env,
                     relays=relays,
@@ -2119,7 +2188,7 @@ def main() -> None:
             return
 
         if args.cmd == "refresh":
-            runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n)
+            runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n, dry_run=args.dry_run)
             runner.ingest_sources_once(
                 api_limit_per_source=args.api_limit_per_source,
                 new_source_lookback_days=args.new_source_lookback_days,
@@ -2193,6 +2262,43 @@ def main() -> None:
             print("Removed stored nsec." if removed else "No stored nsec found.")
             return
 
+        if args.cmd == "completions":
+            cmds = sorted(_interactive_commands() + ["help", "--help", "-h"])
+            script_fn = os.path.basename(__file__)
+            fn_id = script_fn.replace(".", "_").replace("/", "_")
+            if args.shell == "zsh":
+                lines = [
+                    "#compdef " + script_fn,
+                    "_" + script_fn + "() {",
+                    '  local -a cmds',
+                    '  cmds=(',
+                    '    ' + " ".join('"' + c + ':' + c + '"' for c in cmds),
+                    '  )',
+                    "  _describe 'command' cmds",
+                    "}",
+                    "_" + script_fn,
+                ]
+            else:
+                lines = [
+                    "_" + fn_id + "() {",
+                    '  local cur="${COMP_WORDS[$COMP_CWORD]}"',
+                    '  local prev="${COMP_WORDS[$COMP_CWORD-1]}"',
+                    '  local cmds="' + " ".join(cmds) + '"',
+                    '  COMPREPLY=($(compgen -W "$cmds" -- "$cur"))',
+                    "}",
+                    "complete -F _" + fn_id + " " + script_fn,
+                ]
+            print("\n".join(lines))
+            return
+
+    except SystemExit as ex:
+        msg = str(ex)
+        if msg:
+            print(msg)
+        sys.exit(1)
+    except Exception as ex:
+        print(f"Error: {ex}")
+        sys.exit(1)
     finally:
         store.close()
 
@@ -2257,7 +2363,7 @@ def _interactive_shell(db_path: str, n: UrlNormaliser, stop_event: threading.Eve
         print(msg)
 
     print("== PeerTube2Nostr Interactive ==")
-    print("Type '/' for commands. 'quit' to exit.")
+    print("Type '/', '--help', or '?' for commands. 'quit' to exit.")
     _log(_interactive_dashboard(store, db_path))
 
     try:
@@ -2268,7 +2374,7 @@ def _interactive_shell(db_path: str, n: UrlNormaliser, stop_event: threading.Eve
                     {"prompt": "ansicyan bold", "toolbar": "ansiblack bg:ansiwhite"}
                 )
                 session = PromptSession(
-                    message=[("class:prompt", "> ")],
+                    message=[("class:prompt", "[PT2N]> ")],
                     history=FileHistory(_history_path()),
                     auto_suggest=AutoSuggestFromHistory(),
                     completer=_InteractiveCompleter(),
@@ -2284,7 +2390,7 @@ def _interactive_shell(db_path: str, n: UrlNormaliser, stop_event: threading.Eve
                 if session is not None:
                     line = session.prompt().strip()
                 else:
-                    line = input("> ").strip()
+                    line = input("[PT2N]> ").strip()
             except EOFError:
                 line = "quit"
             if not line:
@@ -2341,7 +2447,7 @@ def _interactive_shell(db_path: str, n: UrlNormaliser, stop_event: threading.Eve
                 except EOFError:
                     max_day = ""
                 parsed = _parse_set_rate_args(
-                    [f"--min-interval-seconds={min_int}"] if min_int else []
+                    ([f"--min-interval-seconds={min_int}"] if min_int else [])
                     + ([f"--max-posts-per-hour={max_per}"] if max_per else [])
                     + ([f"--max-posts-per-day-per-source={max_day}"] if max_day else [])
                 )
@@ -2487,7 +2593,7 @@ def _interactive_arg_prompts() -> dict[str, list[str]]:
         "add-rss": ["RSS URL"],
         "set-rss": ["Source id", "RSS URL"],
         "set-channel": ["Source id", "Channel URL"],
-        "edit-source": ["Source id"],
+        "edit-source": [],
         "set-source-lookback": ["Source id", "Lookback days (or 'none')"],
         "set-rate": ["Min interval seconds", "Max posts per hour", "Max posts per day per source"],
         "enable-source": ["Source id"],
@@ -2556,7 +2662,7 @@ class CommandRegistry:
 
     def dispatch(self, ctx: CommandContext, cmd: str, args: list[str]) -> bool:
         cmd = _normalize_cmd(cmd)
-        if cmd in ("/", "?", "help"):
+        if cmd in ("/", "?", "help", "--help", "-h"):
             _emit_help(ctx.log_fn)
             return False
         if cmd in ("quit", "exit"):
@@ -2699,13 +2805,18 @@ def _cmd_list_relays(ctx: CommandContext, _args: list[str]) -> bool:
     if not rows:
         ctx.log_fn("No relays.")
     else:
-        ctx.log_fn("id\tenabled\trelay_url\tcanonical\tlast_used\tlast_error")
+        table_rows: list[list[str]] = []
         for (rid, enabled, url, url_norm, last_used_ts, last_error) in rows:
             lu = str(last_used_ts) if last_used_ts else "-"
             le = (last_error or "").replace("\n", " ")
             if len(le) > 80:
                 le = le[:77] + "..."
-            ctx.log_fn(f"{rid}\t{enabled}\t{url}\t{url_norm}\t{lu}\t{le}")
+            table_rows.append([str(rid), str(enabled), url, url_norm, lu, le])
+        for line in _format_table(
+            ["id", "enabled", "relay_url", "canonical", "last_used", "last_error"],
+            table_rows,
+        ):
+            ctx.log_fn(line)
     return False
 
 
@@ -2750,8 +2861,8 @@ def _cmd_list_sources(ctx: CommandContext, _args: list[str]) -> bool:
     if not rows:
         ctx.log_fn("No sources.")
     else:
-        ctx.log_fn("id\tenabled\tapi_base\tapi_channel\trss_url\tlookback\tlast_status\tlast_polled\tlast_error")
-        for (sid, enabled, api_base, api_channel, api_channel_url, rss_url, lookback_days, last_polled_ts, last_error) in rows:
+        table_rows: list[list[str]] = []
+        for (sid, enabled, api_base, api_channel, _api_channel_url, rss_url, lookback_days, last_polled_ts, last_error) in rows:
             lp = str(last_polled_ts) if last_polled_ts else "-"
             lb = str(lookback_days) if lookback_days is not None else "-"
             if last_polled_ts:
@@ -2761,8 +2872,12 @@ def _cmd_list_sources(ctx: CommandContext, _args: list[str]) -> bool:
             le = (last_error or "").replace("\n", " ")
             if len(le) > 80:
                 le = le[:77] + "..."
-            api = f"{api_base or ''} {api_channel or ''}".strip()
-            ctx.log_fn(f"{sid}\t{enabled}\t{api}\t{rss_url or ''}\t{lb}\t{status}\t{lp}\t{le}")
+            table_rows.append([str(sid), str(enabled), api_base or "", api_channel or "", rss_url or "", lb, status, lp, le])
+        for line in _format_table(
+            ["id", "enabled", "api_base", "api_channel", "rss_url", "lookback", "last_status", "last_polled", "last_error"],
+            table_rows,
+        ):
+            ctx.log_fn(line)
     return False
 
 
@@ -2785,13 +2900,19 @@ def _cmd_set_rss(ctx: CommandContext, args: list[str]) -> bool:
     rss_norm = ctx.n.normalise_feed_url(args[1])
     if not ctx.n.looks_like_peertube_feed(rss_norm):
         ctx.log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
-    ctx.store.set_source_rss(int(args[0]), args[1])
+    c = ctx.store.set_source_rss(int(args[0]), args[1])
+    if not c:
+        ctx.log_fn(f"Source {args[0]} not found.")
+        return False
     ctx.log_fn(f"Set RSS fallback for source {args[0]} (canonical: {rss_norm})")
     return False
 
 
 def _cmd_set_channel(ctx: CommandContext, args: list[str]) -> bool:
-    ctx.store.set_source_channel(int(args[0]), args[1])
+    c = ctx.store.set_source_channel(int(args[0]), args[1])
+    if not c:
+        ctx.log_fn(f"Source {args[0]} not found.")
+        return False
     ctx.log_fn(f"Set channel URL for source {args[0]}")
     return False
 
@@ -2799,7 +2920,10 @@ def _cmd_set_channel(ctx: CommandContext, args: list[str]) -> bool:
 def _cmd_set_source_lookback(ctx: CommandContext, args: list[str]) -> bool:
     val = str(args[1]).strip().lower()
     if val in ("none", "null", "off"):
-        ctx.store.set_source_lookback(int(args[0]), None)
+        c = ctx.store.set_source_lookback(int(args[0]), None)
+        if not c:
+            ctx.log_fn(f"Source {args[0]} not found.")
+            return False
         ctx.log_fn(f"Cleared lookback for source {args[0]}")
         return False
     try:
@@ -2807,7 +2931,10 @@ def _cmd_set_source_lookback(ctx: CommandContext, args: list[str]) -> bool:
     except ValueError:
         ctx.log_fn("lookback_days must be an integer or 'none'")
         return False
-    ctx.store.set_source_lookback(int(args[0]), days)
+    c = ctx.store.set_source_lookback(int(args[0]), days)
+    if not c:
+        ctx.log_fn(f"Source {args[0]} not found.")
+        return False
     ctx.log_fn(f"Set lookback_days={days} for source {args[0]}")
     return False
 
@@ -3125,23 +3252,27 @@ def _apply_edit_source(store: Store, n: UrlNormaliser, source_id: str, channel_u
     updates = []
     if channel_url:
         if str(channel_url).strip().lower() in ("none", "null", "off", "-"):
-            store.clear_source_channel(sid)
-            updates.append("channel cleared")
+            c = store.clear_source_channel(sid)
+            if c:
+                updates.append("channel cleared")
         else:
-            store.set_source_channel(sid, channel_url)
-            updates.append("channel")
+            c = store.set_source_channel(sid, channel_url)
+            if c:
+                updates.append("channel")
     if rss_url:
         if str(rss_url).strip().lower() in ("none", "null", "off", "-"):
-            store.clear_source_rss(sid)
-            updates.append("rss cleared")
+            c = store.clear_source_rss(sid)
+            if c:
+                updates.append("rss cleared")
         else:
             rss_norm = n.normalise_feed_url(rss_url)
             if not n.looks_like_peertube_feed(rss_norm):
                 log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
-            store.set_source_rss(sid, rss_url)
-            updates.append("rss")
+            c = store.set_source_rss(sid, rss_url)
+            if c:
+                updates.append("rss")
     if not updates:
-        log_fn("No changes requested.")
+        log_fn("Source not found.")
         return
     log_fn(f"Updated source {sid}: {', '.join(updates)}")
     _resync_source(store, n, sid, log_fn)

@@ -111,8 +111,9 @@ class Runner:
         else:
             self.store.mark_source_polled(sid, err or "No RSS fallback and API failed")
 
-    def publish_one_pending(self, nsec: str, relays: List[str]) -> bool:
-        pending = self.store.next_pending_eligible(self.n.now_ts(), self.store.get_daily_source_limit())
+    def publish_one_pending(self, nsec: str, relays: List[str], pending: Optional[dict] = None) -> bool:
+        if pending is None:
+            pending = self.store.next_pending_eligible(self.n.now_ts(), self.store.get_daily_source_limit())
         if not pending: return False
         try:
             eid = self.pub.publish(nsec, relays, self.pub._build_content(pending), self.pub._build_tags(pending))
@@ -151,7 +152,7 @@ class Runner:
                         wait = rate.next_wait(pending["source_id"])
                         if wait <= 0:
                             self.status_fn("publishing")
-                            self.publish_one_pending(nsec, relays)
+                            self.publish_one_pending(nsec, relays, pending=pending)
                         else:
                             self.status_fn("rate-limited")
                     else:
