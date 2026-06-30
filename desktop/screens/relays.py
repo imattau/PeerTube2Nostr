@@ -11,6 +11,7 @@ from desktop.dialogs.confirm import ConfirmDialog
 class RelaysScreen(Gtk.Box):
     def __init__(self, window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.get_style_context().add_class('content-area')
         self._window = window
         self.set_margin_start(40)
         self.set_margin_end(40)
@@ -36,6 +37,13 @@ class RelaysScreen(Gtk.Box):
         add_btn.get_style_context().add_class('button-primary')
         add_btn.connect('clicked', self._on_add)
         header.pack_end(add_btn, False, False, 0)
+
+        import_btn = Gtk.Button(label='Import from NIP-65')
+        import_btn.get_style_context().add_class('button-default')
+        import_btn.set_margin_end(8)
+        import_btn.connect('clicked', self._on_import_nip65)
+        header.pack_end(import_btn, False, False, 0)
+
         self.pack_start(header, False, False, 0)
 
         self._relay_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -56,6 +64,54 @@ class RelaysScreen(Gtk.Box):
             except Exception:
                 pass
             self.refresh()
+
+    def _on_import_nip65(self, _btn):
+        store = getattr(self._window, 'store', None)
+        if not store:
+            return
+        from core.database import get_stored_nsec
+        from core.sync import import_nip65_relays
+        from core.utils import UrlNormaliser
+        nsec = get_stored_nsec(store.db_path)
+        if not nsec:
+            dialog = Gtk.MessageDialog(
+                transient_for=self._window,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.OK,
+                text='No nsec configured',
+                secondary_text='Set a Nostr private key in Preferences first.',
+            )
+            dialog.run()
+            dialog.destroy()
+            return
+        relays = store.get_enabled_relays()
+        if not relays:
+            dialog = Gtk.MessageDialog(
+                transient_for=self._window,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.OK,
+                text='No relays configured',
+                secondary_text='Add at least one relay to bootstrap the NIP-65 profile lookup, then try again.',
+            )
+            dialog.run()
+            dialog.destroy()
+            return
+        count = import_nip65_relays(
+            nsec, store, UrlNormaliser(), relays, log_fn=print,
+        )
+        dialog = Gtk.MessageDialog(
+            transient_for=self._window,
+            modal=True,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=f'Imported {count} relay(s)',
+            secondary_text='New relays have been added from your Nostr profile.',
+        )
+        dialog.run()
+        dialog.destroy()
+        self.refresh()
 
     def _on_toggle(self, relay_id: int, switch: Gtk.Switch):
         store = getattr(self._window, 'store', None)

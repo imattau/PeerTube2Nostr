@@ -40,6 +40,7 @@ class Banner(Gtk.Revealer):
         box.pack_start(dot, False, False, 0)
 
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        text_box.get_style_context().add_class('banner-text')
         title_lbl = Gtk.Label(label=title)
         title_lbl.get_style_context().add_class('heading-4')
         title_lbl.set_halign(Gtk.Align.START)
@@ -56,6 +57,7 @@ class Banner(Gtk.Revealer):
         self._action_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL, spacing=8
         )
+        self._action_box.get_style_context().add_class('banner-action')
         box.pack_end(self._action_box, False, False, 0)
 
         self.add(box)

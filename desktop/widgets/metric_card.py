@@ -10,6 +10,7 @@ class MetricCard(Gtk.EventBox):
         self.set_size_request(220, 104)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.get_style_context().add_class('metric-card-inner')
         box.set_margin_start(16)
         box.set_margin_end(16)
         box.set_margin_top(14)

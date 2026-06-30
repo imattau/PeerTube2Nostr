@@ -2,8 +2,9 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
 
-from desktop.core import Store
-from core.database import set_stored_nsec
+from desktop.core import Store, UrlNormaliser
+from core.database import set_stored_nsec, get_stored_nsec
+from core.sync import import_nip65_relays
 from desktop.setup_wizard.welcome_page import WelcomePage
 from desktop.setup_wizard.identity_page import IdentityPage
 from desktop.setup_wizard.relay_page import RelayPage
@@ -49,6 +50,7 @@ class SetupWizard(Gtk.Assistant):
         self._pages['ready'] = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=16
         )
+        self._pages['ready'].get_style_context().add_class('content-area')
         self._pages['ready'].set_valign(Gtk.Align.CENTER)
         self._pages['ready'].set_halign(Gtk.Align.CENTER)
         self._pages['ready'].set_margin_start(40)
@@ -95,6 +97,17 @@ class SetupWizard(Gtk.Assistant):
             except Exception:
                 pass
 
+        if self._pages['relay'].get_import_nip65():
+            nsec = get_stored_nsec(self._store.db_path)
+            if nsec:
+                bootstrap = [relay_url] if relay_url else []
+                if not bootstrap:
+                    bootstrap = ["wss://relay.damus.io", "wss://nos.lol"]
+                import_nip65_relays(
+                    nsec, self._store, UrlNormaliser(), bootstrap,
+                    log_fn=print,
+                )
+
         if source_url:
             try:
                 self._store.add_channel_source(source_url)
@@ -102,7 +115,7 @@ class SetupWizard(Gtk.Assistant):
                 try:
                     self._store.add_rss_source(source_url)
                 except Exception:
-                    pass
+                        pass
 
         self._store.set_setting('setup_complete', 'true')
 

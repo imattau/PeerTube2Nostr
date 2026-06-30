@@ -333,6 +333,30 @@ GtkEntry:focus {
     color: #E0E0E0;
 }
 
+/* ---- Viewport (inside ScrolledWindow) ---- */
+GtkViewport {
+    background-color: inherit;
+}
+.log-viewer GtkViewport {
+    background-color: #242424;
+}
+
+/* ---- Dialogs ---- */
+GtkDialog {
+    background-color: #F6F5F4;
+}
+
+/* ---- Assistant (wizard) ---- */
+GtkAssistant {
+    background-color: #F6F5F4;
+}
+
+/* ---- Action Row Icon ---- */
+#action-row-icon {
+    min-width: 24px;
+    min-height: 24px;
+}
+
 /* ---- Typography ---- */
 .heading-1 {
     font-size: 32px;
@@ -361,4 +385,30 @@ GtkEntry:focus {
 .body-small {
     font-size: 11px;
     color: #4A4A4A;
+}
+
+/* ---- Nested Box Styling ---- */
+.action-row-text {
+    background-color: transparent;
+}
+.action-row-right {
+    background-color: transparent;
+}
+.status-card-inner {
+    background-color: transparent;
+}
+.status-card-text {
+    background-color: transparent;
+}
+.banner-text {
+    background-color: transparent;
+}
+.banner-action {
+    background-color: transparent;
+}
+.metric-card-inner {
+    background-color: transparent;
+}
+.queue-row-text {
+    background-color: transparent;
 }

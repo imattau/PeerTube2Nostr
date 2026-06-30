@@ -14,6 +14,7 @@ class SetNsecDialog(Gtk.Dialog):
         self.set_default_size(500, 220)
 
         content = self.get_content_area()
+        content.get_style_context().add_class('content-area')
         content.set_margin_start(24)
         content.set_margin_end(24)
         content.set_margin_top(24)

@@ -28,6 +28,7 @@ class ActionRow(Gtk.ListBoxRow):
         box.pack_start(self._icon, False, False, 0)
 
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        text_box.get_style_context().add_class('action-row-text')
         self._title = Gtk.Label(label=title)
         self._title.get_style_context().add_class('heading-4')
         self._title.set_halign(Gtk.Align.START)
@@ -43,6 +44,7 @@ class ActionRow(Gtk.ListBoxRow):
         self._right_box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL, spacing=8
         )
+        self._right_box.get_style_context().add_class('action-row-right')
         box.pack_end(self._right_box, False, False, 0)
 
         self.add(box)

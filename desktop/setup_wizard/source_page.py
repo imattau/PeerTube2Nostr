@@ -6,6 +6,7 @@ from gi.repository import Gtk
 class SourcePage(Gtk.Box):
     def __init__(self, wizard=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self.get_style_context().add_class('content-area')
         self._wizard = wizard
         self.set_margin_start(40)
         self.set_margin_end(40)

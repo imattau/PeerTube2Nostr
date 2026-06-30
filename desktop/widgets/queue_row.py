@@ -33,6 +33,7 @@ class QueueRow(Gtk.ListBoxRow):
         box.pack_start(thumbnail, False, False, 0)
 
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        text_box.get_style_context().add_class('queue-row-text')
         self._title = Gtk.Label(label=title)
         self._title.get_style_context().add_class('heading-4')
         self._title.set_halign(Gtk.Align.START)

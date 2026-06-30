@@ -9,6 +9,7 @@ from desktop.widgets.badge import Badge
 class PreferencesScreen(Gtk.Box):
     def __init__(self, window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.get_style_context().add_class('content-area')
         self._window = window
         self.set_margin_start(40)
         self.set_margin_end(40)

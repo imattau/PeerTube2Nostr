@@ -6,6 +6,7 @@ from gi.repository import Gtk
 class RelayPage(Gtk.Box):
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self.get_style_context().add_class('content-area')
         self.set_margin_start(40)
         self.set_margin_end(40)
         self.set_margin_top(32)
@@ -39,5 +40,14 @@ class RelayPage(Gtk.Box):
         skip_label.set_margin_top(8)
         self.pack_start(skip_label, False, False, 0)
 
+        self._import_check = Gtk.CheckButton(
+            label='Import relays from my Nostr profile (NIP-65)'
+        )
+        self._import_check.set_margin_top(20)
+        self.pack_start(self._import_check, False, False, 0)
+
     def get_url(self) -> str:
         return self._entry.get_text().strip()
+
+    def get_import_nip65(self) -> bool:
+        return self._import_check.get_active()

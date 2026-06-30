@@ -12,6 +12,7 @@ class EmptyState(Gtk.Box):
         button_label: str = '',
     ):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.get_style_context().add_class('card')
         self.set_valign(Gtk.Align.CENTER)
         self.set_halign(Gtk.Align.CENTER)
         self.set_size_request(640, 360)

@@ -14,6 +14,7 @@ class StatusCard(Gtk.Box):
         self.set_margin_bottom(16)
 
         inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        inner.get_style_context().add_class('status-card-inner')
         inner.set_margin_start(20)
         inner.set_margin_end(20)
         inner.set_margin_top(25)
@@ -24,6 +25,7 @@ class StatusCard(Gtk.Box):
         inner.pack_start(self._dot, False, False, 0)
 
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        text_box.get_style_context().add_class('status-card-text')
         self._title = Gtk.Label(label='Publishing is running')
         self._title.get_style_context().add_class('heading-3')
         self._title.set_halign(Gtk.Align.START)

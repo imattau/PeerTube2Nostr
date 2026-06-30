@@ -18,6 +18,7 @@ class ConfirmDialog(Gtk.Dialog):
             destroy_with_parent=True,
         )
         self.set_default_size(500, 240)
+        self.get_content_area().get_style_context().add_class('content-area')
         self.get_content_area().set_margin_start(24)
         self.get_content_area().set_margin_end(24)
         self.get_content_area().set_margin_top(24)

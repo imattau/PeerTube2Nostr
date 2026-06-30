@@ -6,6 +6,7 @@ from gi.repository import Gtk
 class WelcomePage(Gtk.Box):
     def __init__(self):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self.get_style_context().add_class('content-area')
         self.set_valign(Gtk.Align.CENTER)
         self.set_halign(Gtk.Align.CENTER)
         self.set_margin_start(60)
