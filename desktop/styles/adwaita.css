@@ -325,10 +325,14 @@ GtkEntry:focus {
 
 /* ---- Log Viewer ---- */
 .log-viewer {
-    background-color: #242424;
+    background-color: #F6F5F4;
     border-radius: 10px;
 }
 .log-viewer text {
+    background-color: #242424;
+    color: #E0E0E0;
+}
+.log-viewer GtkTextView {
     background-color: #242424;
     color: #E0E0E0;
 }
@@ -338,7 +342,7 @@ GtkViewport {
     background-color: inherit;
 }
 .log-viewer GtkViewport {
-    background-color: #242424;
+    background-color: #F6F5F4;
 }
 
 /* ---- Dialogs ---- */
