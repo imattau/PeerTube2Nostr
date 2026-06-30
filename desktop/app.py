@@ -4,7 +4,7 @@ import sys
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gio, Gdk
+from gi.repository import Gtk, Gio, Gdk, GLib
 
 from desktop.core import Store, UrlNormaliser
 
@@ -70,7 +70,7 @@ class PeerTube2NostrApp(Gtk.Application):
             self.quit()
             return
 
-        is_complete = self.store.get_setting('setup_complete') == '1'
+        is_complete = self.store.get_setting('setup_complete') in ('1', 'true', True)
 
         if is_complete:
             self._show_main_window()
@@ -83,8 +83,12 @@ class PeerTube2NostrApp(Gtk.Application):
             wizard.show()
 
     def _on_wizard_finished(self, wizard):
+        GLib.idle_add(self._finish_startup, wizard)
+
+    def _finish_startup(self, wizard):
         self._show_main_window()
         wizard.destroy()
+        return False
 
     def _show_main_window(self):
         from desktop.window import MainWindow

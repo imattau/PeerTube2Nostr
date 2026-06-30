@@ -146,8 +146,6 @@ class MainWindow(Gtk.ApplicationWindow):
         return sidebar
 
     def _build_content(self):
-        self._overlay = Gtk.Overlay()
-
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self._stack.set_transition_duration(200)
@@ -177,26 +175,13 @@ class MainWindow(Gtk.ApplicationWindow):
             self._screen_preferences, 'preferences', 'Preferences'
         )
 
-        self._stack.set_visible_child_name('overview')
-        self._update_nav_active('overview')
-
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        content.get_style_context().add_class('content-area')
-        content.pack_start(self._stack, True, True, 0)
-        self._overlay.add(content)
-
-        self._error_stack = Gtk.Stack()
-        self._error_stack.set_visible(False)
-        self._error_stack.set_valign(Gtk.Align.CENTER)
-        self._error_stack.set_halign(Gtk.Align.CENTER)
-
         self._error_backend = EmptyState(
             icon='\u21AF',
             title='Cannot connect to the backend',
             body='PeerTube2Nostr may not be running, or the API address may be incorrect.',
             button_label='Try again',
         )
-        self._error_stack.add_named(self._error_backend, 'backend')
+        self._stack.add_named(self._error_backend, 'error-backend')
 
         self._error_empty = EmptyState(
             icon='\u25C9',
@@ -204,7 +189,7 @@ class MainWindow(Gtk.ApplicationWindow):
             body='Add a PeerTube channel or RSS feed to begin discovering videos.',
             button_label='Add source',
         )
-        self._error_stack.add_named(self._error_empty, 'empty')
+        self._stack.add_named(self._error_empty, 'error-empty')
 
         self._error_db = EmptyState(
             icon='!',
@@ -212,10 +197,15 @@ class MainWindow(Gtk.ApplicationWindow):
             body='Another process is using the database. The application will retry automatically.',
             button_label='Retry now',
         )
-        self._error_stack.add_named(self._error_db, 'database')
+        self._stack.add_named(self._error_db, 'error-database')
 
-        self._overlay.add_overlay(self._error_stack)
-        return self._overlay
+        self._stack.set_visible_child_name('overview')
+        self._update_nav_active('overview')
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content.get_style_context().add_class('content-area')
+        content.pack_start(self._stack, True, True, 0)
+        return content
 
     def _on_nav_click(self, _widget, _event, view_name: str):
         self._stack.set_visible_child_name(view_name)
@@ -248,11 +238,10 @@ class MainWindow(Gtk.ApplicationWindow):
             self._status_label.set_text(label or 'Stopped')
 
     def show_error(self, error_type: str):
-        self._error_stack.set_visible_child_name(error_type)
-        self._error_stack.set_visible(True)
+        self._stack.set_visible_child_name(f'error-{error_type}')
 
     def hide_error(self):
-        self._error_stack.set_visible(False)
+        self._stack.set_visible_child_name(self._current_view)
 
     def switch_to(self, view_name: str):
         self._on_nav_click(None, None, view_name)
