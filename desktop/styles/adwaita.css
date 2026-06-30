@@ -416,3 +416,14 @@ GtkAssistant {
 .queue-row-text {
     background-color: transparent;
 }
+
+/* ---- Activity Screen ---- */
+.activity-screen {
+    background-color: transparent;
+}
+.activity-screen-header {
+    background-color: transparent;
+}
+.activity-screen-toolbar {
+    background-color: transparent;
+}

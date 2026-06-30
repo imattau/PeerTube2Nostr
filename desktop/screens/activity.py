@@ -9,12 +9,14 @@ from desktop.widgets.log_viewer import LogViewer
 class ActivityScreen(Gtk.Box):
     def __init__(self, window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.get_style_context().add_class('activity-screen')
         self._window = window
         self.set_margin_start(40)
         self.set_margin_end(40)
         self.set_margin_top(32)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        header.get_style_context().add_class('activity-screen-header')
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         title = Gtk.Label(label='Activity')
         title.get_style_context().add_class('heading-1')
@@ -34,6 +36,7 @@ class ActivityScreen(Gtk.Box):
         self.pack_start(header, False, False, 0)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        toolbar.get_style_context().add_class('activity-screen-toolbar')
         toolbar.set_margin_top(24)
         toolbar.set_margin_bottom(16)
 
