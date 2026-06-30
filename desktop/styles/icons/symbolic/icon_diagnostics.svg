@@ -1,0 +1,13 @@
+<svg width="150" height="92" viewBox="0 0 150 92" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="0.5" y="0.5" width="149" height="91" rx="9.5" fill="white"/>
+<rect x="0.5" y="0.5" width="149" height="91" rx="9.5" stroke="#D8D6D3"/>
+<path d="M28 18V22" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M32.2 23.8L35.1 20.9" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M34 28H38" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M32.2 32.2L35.1 35.1" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M28 34V38" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M23.8 32.2L20.9 35.1" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M22 28H18" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M23.8 23.8L20.9 20.9" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M28 31C29.6569 31 31 29.6569 31 28C31 26.3431 29.6569 25 28 25C26.3431 25 25 26.3431 25 28C25 29.6569 26.3431 31 28 31Z" stroke="#2E3436" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

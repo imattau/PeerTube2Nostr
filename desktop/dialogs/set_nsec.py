@@ -1,0 +1,58 @@
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk
+
+
+class SetNsecDialog(Gtk.Dialog):
+    def __init__(self, parent):
+        super().__init__(
+            title='Set Nostr secret key',
+            transient_for=parent,
+            modal=True,
+            destroy_with_parent=True,
+        )
+        self.set_default_size(500, 220)
+
+        content = self.get_content_area()
+        content.set_margin_start(24)
+        content.set_margin_end(24)
+        content.set_margin_top(24)
+        content.set_margin_bottom(16)
+
+        title_lbl = Gtk.Label(label='Enter your NSEC')
+        title_lbl.get_style_context().add_class('heading-3')
+        title_lbl.set_halign(Gtk.Align.START)
+        content.pack_start(title_lbl, False, False, 0)
+
+        body_lbl = Gtk.Label(
+            label='Your key is stored securely on this device only.'
+        )
+        body_lbl.get_style_context().add_class('body')
+        body_lbl.set_halign(Gtk.Align.START)
+        body_lbl.set_margin_top(8)
+        content.pack_start(body_lbl, False, False, 0)
+
+        self._entry = Gtk.Entry()
+        self._entry.set_placeholder_text('nsec1...')
+        self._entry.set_visibility(False)
+        self._entry.set_size_request(596, 46)
+        self._entry.set_margin_top(16)
+        content.pack_start(self._entry, False, False, 0)
+
+        btn_box = self.get_action_area()
+        btn_box.set_margin_top(16)
+
+        cancel_btn = Gtk.Button(label='Cancel')
+        cancel_btn.get_style_context().add_class('button-default')
+        cancel_btn.connect('clicked', lambda _: self.response(Gtk.ResponseType.CANCEL))
+        btn_box.pack_start(cancel_btn, False, False, 0)
+
+        save_btn = Gtk.Button(label='Save')
+        save_btn.get_style_context().add_class('button-primary')
+        save_btn.connect('clicked', lambda _: self.response(Gtk.ResponseType.OK))
+        btn_box.pack_end(save_btn, False, False, 0)
+
+        self.show_all()
+
+    def get_nsec(self) -> str:
+        return self._entry.get_text().strip()

@@ -4,6 +4,19 @@ from typing import Optional, List, Dict, Tuple, Any
 from .utils import UrlNormaliser
 from .models import IngestedItem
 
+try:
+    import keyring
+    import keyring.errors
+except Exception:
+    keyring = None
+
+
+KEYRING_SERVICE = "peertube_nostr"
+
+
+def _keyring_available() -> bool:
+    return keyring is not None
+
 class Store:
     def __init__(self, db_path: str, n: UrlNormaliser) -> None:
         self.db_path = db_path
@@ -394,21 +407,52 @@ class Store:
         row = self.conn.execute("SELECT MIN(posted_ts) FROM videos WHERE status='posted' AND source_id=? AND posted_ts >= ?", (source_id, since_ts)).fetchone()
         return row[0] if row else None
 
-def get_nsec_file_path(db_path: str) -> str:
+def _keyring_user(db_path: str) -> str:
+    return os.path.abspath(db_path)
+
+def _nsec_file_path(db_path: str) -> str:
     return os.environ.get("NSEC_FILE") or (os.path.abspath(db_path) + ".nsec")
 
-def get_stored_nsec(db_path: str) -> Optional[str]:
-    # Keyring omitted for webapp backend simplicity, using file-based storage
-    path = get_nsec_file_path(db_path)
+def _read_secret_file(path: str) -> Optional[str]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip() or None
     except FileNotFoundError:
         return None
 
-def set_stored_nsec(db_path: str, nsec: str) -> None:
-    path = get_nsec_file_path(db_path)
+def _write_secret_file(path: str, value: str) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(nsec.strip() + "\n")
+        f.write(value.strip() + "\n")
+
+def get_stored_nsec(db_path: str) -> Optional[str]:
+    if _keyring_available():
+        try:
+            nsec = keyring.get_password(KEYRING_SERVICE, _keyring_user(db_path))
+            if nsec:
+                return nsec
+        except keyring.errors.KeyringError:
+            pass
+    return _read_secret_file(_nsec_file_path(db_path))
+
+def set_stored_nsec(db_path: str, nsec: str) -> Tuple[str, Optional[str]]:
+    if _keyring_available():
+        try:
+            keyring.set_password(KEYRING_SERVICE, _keyring_user(db_path), nsec)
+            return "keyring", None
+        except keyring.errors.KeyringError:
+            pass
+    path = _nsec_file_path(db_path)
+    _write_secret_file(path, nsec)
+    return "file", path
+
+def clear_stored_nsec(db_path: str) -> bool:
+    removed = False
+    if _keyring_available():
+        try:
+            keyring.delete_password(KEYRING_SERVICE, _keyring_user(db_path))
+            removed = True
+        except keyring.errors.PasswordDeleteError:
+            pass
+    return removed

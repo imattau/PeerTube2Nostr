@@ -1,0 +1,348 @@
+/* =========================================================
+   PeerTube2Nostr — GNOME 3 Desktop UI
+   Adwaita-inspired GTK CSS Theme
+   Figma colors: Window #F6F5F4, Surface #FFFFFF,
+   Header #EBEAE9, Accent #3584E4, Text #2E3436
+   ========================================================= */
+
+/* ---- Base ---- */
+GtkWindow {
+    background-color: #F6F5F4;
+}
+
+.content-area {
+    background-color: #F6F5F4;
+}
+GtkStack {
+    background-color: #F6F5F4;
+}
+GtkOverlay {
+    background-color: #F6F5F4;
+}
+GtkListBox {
+    background-color: transparent;
+}
+GtkListBoxRow {
+    background-color: #FFFFFF;
+}
+GtkScrolledWindow {
+    background-color: #F6F5F4;
+}
+
+/* ---- Header Bar ---- */
+GtkHeaderBar {
+    background-color: #EBEAE9;
+    border-bottom: 1px solid #D8D6D3;
+    padding: 0 8px;
+}
+
+#status-dot {
+    font-size: 10px;
+}
+#status-dot.status-running {
+    color: #2EC27E;
+}
+#status-dot.status-stopped {
+    color: #E01B24;
+}
+
+#status-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #6E6C68;
+}
+
+/* ---- Buttons ---- */
+.button-icon {
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid #D8D6D3;
+    background-color: #FFFFFF;
+    color: #2E3436;
+    font-size: 16px;
+}
+.button-icon:hover {
+    background-color: #F0EFEE;
+}
+
+.button-primary {
+    background-color: #3584E4;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.button-primary:hover {
+    background-color: #2a6fc7;
+}
+
+.button-default {
+    background-color: #FFFFFF;
+    color: #2E3436;
+    border: 1px solid #D8D6D3;
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.button-default:hover {
+    background-color: #F0EFEE;
+}
+
+.button-destructive {
+    background-color: #E01B24;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.button-destructive:hover {
+    background-color: #c0141d;
+}
+
+/* ---- Sidebar ---- */
+.sidebar {
+    background-color: #F0EFEE;
+    border-right: 1px solid #D8D6D3;
+}
+
+.sidebar-header {
+    font-size: 14px;
+    font-weight: 700;
+    color: #2E3436;
+    padding: 10px 0;
+}
+
+.nav-item {
+    border-radius: 8px;
+}
+.nav-item:hover,
+.nav-item-hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+.nav-item-active {
+    background-color: #D7E7FA;
+}
+.nav-item-active .nav-icon {
+    color: #3584E4;
+}
+.nav-item-active .nav-label {
+    color: #3584E4;
+}
+
+.nav-icon {
+    font-size: 18px;
+    color: #555555;
+    min-width: 24px;
+}
+
+.nav-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #2E3436;
+}
+
+/* ---- Badges ---- */
+.badge {
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 20px;
+    min-height: 18px;
+}
+.badge-success {
+    background-color: #1E9B5E;
+    color: #FFFFFF;
+}
+.badge-accent {
+    background-color: #2563EB;
+    color: #FFFFFF;
+}
+.badge-warning {
+    background-color: #B8860B;
+    color: #FFFFFF;
+}
+.badge-error {
+    background-color: #B71C1C;
+    color: #FFFFFF;
+}
+
+/* ---- Cards ---- */
+.card {
+    background-color: #FFFFFF;
+    border: 1px solid #D8D6D3;
+    border-radius: 12px;
+}
+
+.metric-card {
+    background-color: #FFFFFF;
+    border: 1px solid #D8D6D3;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+/* ---- Metric Card Labels ---- */
+.metric-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #6E6C68;
+}
+
+.metric-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #2E3436;
+}
+
+/* ---- Combo Box & Check Button ---- */
+GtkComboBoxText {
+    border: 1px solid #D8D6D3;
+    border-radius: 8px;
+    padding: 6px 12px;
+    background-color: #FFFFFF;
+    color: #2E3436;
+    min-height: 28px;
+}
+GtkComboBoxText:hover {
+    border-color: #3584E4;
+}
+
+GtkCheckButton {
+    min-width: 18px;
+    min-height: 18px;
+}
+GtkCheckButton:checked {
+    color: #3584E4;
+}
+
+/* ---- Switch ---- */
+GtkSwitch.toggle {
+    min-width: 44px;
+    min-height: 24px;
+}
+
+/* ---- Entry Fields ---- */
+GtkEntry {
+    border: 1px solid #D8D6D3;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background-color: #FFFFFF;
+    color: #2E3436;
+    font-size: 13px;
+    caret-color: #3584E4;
+}
+GtkEntry:focus {
+    border-color: #3584E4;
+}
+GtkSwitch.toggle {
+    background-color: #C7C5C2;
+}
+GtkSwitch.toggle:checked {
+    background-color: #3584E4;
+}
+
+/* ---- Banners ---- */
+.banner-warning {
+    background-color: #FFF8E5;
+    border: 1px solid #E7C75D;
+    border-radius: 10px;
+}
+.banner-error {
+    background-color: #FFE5E5;
+    border: 1px solid #E01B24;
+    border-radius: 10px;
+}
+.banner-info {
+    background-color: #D7E7FA;
+    border: 1px solid #3584E4;
+    border-radius: 10px;
+}
+
+/* ---- Queue Row Thumbnail ---- */
+.queue-thumbnail {
+    background-color: #B7CBEA;
+    border-radius: 6px;
+    min-width: 96px;
+    min-height: 54px;
+}
+#queue-play-icon {
+    font-size: 18px;
+    color: #FFFFFF;
+}
+
+/* ---- GtkAssistant ---- */
+GtkAssistant {
+    background-color: #F6F5F4;
+}
+GtkAssistant button {
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+GtkAssistant button:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+/* ---- Card Selected State ---- */
+.card-selected {
+    border: 2px solid #3584E4;
+    background-color: #D7E7FA;
+}
+
+/* ---- Ready Icon ---- */
+#wizard-ready-icon {
+    font-size: 58px;
+    color: #2EC27E;
+}
+
+/* ---- Empty State ---- */
+#empty-state-icon {
+    color: #6E6C68;
+    margin-bottom: 16px;
+}
+
+/* ---- Log Viewer ---- */
+.log-viewer {
+    background-color: #242424;
+    border-radius: 10px;
+}
+.log-viewer text {
+    color: #E0E0E0;
+}
+
+/* ---- Typography ---- */
+.heading-1 {
+    font-size: 32px;
+    font-weight: 700;
+    color: #2E3436;
+}
+.heading-2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #2E3436;
+}
+.heading-3 {
+    font-size: 19px;
+    font-weight: 600;
+    color: #2E3436;
+}
+.heading-4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #2E3436;
+}
+.body {
+    font-size: 13px;
+    color: #4A4A4A;
+}
+.body-small {
+    font-size: 11px;
+    color: #4A4A4A;
+}
