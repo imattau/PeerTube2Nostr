@@ -18,17 +18,17 @@ class LogViewer(Gtk.ScrolledWindow):
             Pango.FontDescription('monospace 11')
         )
 
+        self._tag_timestamp = self._buffer.create_tag(
+            'timestamp', foreground='#6B6B6B'
+        )
         self._tag_info = self._buffer.create_tag(
-            'info', foreground='#8A8A8A'
+            'info', foreground='#B0B0B0'
         )
         self._tag_warn = self._buffer.create_tag(
             'warn', foreground='#E5A50A'
         )
         self._tag_error = self._buffer.create_tag(
             'error', foreground='#E01B24'
-        )
-        self._tag_timestamp = self._buffer.create_tag(
-            'timestamp', foreground='#555555'
         )
 
         self.add(self._text_view)

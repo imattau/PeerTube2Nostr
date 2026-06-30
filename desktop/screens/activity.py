@@ -53,6 +53,7 @@ class ActivityScreen(Gtk.Box):
         toolbar.pack_start(self._level_combo, False, False, 0)
 
         auto_scroll_lbl = Gtk.Label(label='Auto-scroll')
+        auto_scroll_lbl.get_style_context().add_class('toolbar-label')
         toolbar.pack_start(auto_scroll_lbl, False, False, 0)
         self._auto_scroll = Gtk.CheckButton()
         self._auto_scroll.set_active(True)

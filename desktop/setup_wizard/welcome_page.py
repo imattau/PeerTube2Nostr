@@ -25,7 +25,7 @@ class WelcomePage(Gtk.Box):
         icon_box.set_margin_bottom(20)
 
         play = Gtk.Label(label='\u25B6')
-        play.set_markup('<span size="xx-large">\u25B6</span>')
+        play.set_markup('<span size="xx-large" foreground="#2E3436">\u25B6</span>')
         icon_box.pack_start(play, False, False, 0)
 
         arrow = Gtk.Label(label='\u2192')
