@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
@@ -7,18 +9,11 @@ from desktop.widgets.queue_row import QueueRow
 
 
 class QueueScreen(Gtk.Box):
-    SAMPLE = [
-        ('GNOME 48 Release Highlights', 'GNOME Foundation', 'pending'),
-        ('Building a PeerTube Channel', 'Open Media', 'pending'),
-        ('Nostr Relay Operations', 'Protocol Lab', 'pending'),
-        ('Desktop Publishing Workflow', 'Example Channel', 'pending'),
-    ]
-
     def __init__(self, window):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._window = window
-        self._all_items = list(self.SAMPLE)
         self._filter = 'pending'
+        self._all_items: list[dict] = []
 
         self.set_margin_start(40)
         self.set_margin_end(40)
@@ -43,9 +38,7 @@ class QueueScreen(Gtk.Box):
         header.pack_end(add_btn, False, False, 0)
         self.pack_start(header, False, False, 0)
 
-        toolbar = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL, spacing=8
-        )
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         toolbar.set_margin_top(24)
         toolbar.set_margin_bottom(16)
 
@@ -53,13 +46,12 @@ class QueueScreen(Gtk.Box):
         self._search.connect('search-changed', self._on_search)
         toolbar.pack_start(self._search, False, False, 0)
 
-        pending_count = sum(1 for _, _, s in self._all_items if s == 'pending')
-        self._filter_pending = Gtk.Button(label=f'Pending {pending_count}')
+        self._filter_pending = Gtk.Button(label='Pending')
         self._filter_pending.get_style_context().add_class('button-primary')
         self._filter_pending.connect('clicked', lambda _: self._set_filter('pending'))
         toolbar.pack_start(self._filter_pending, False, False, 0)
 
-        self._filter_failed = Gtk.Button(label='Failed 0')
+        self._filter_failed = Gtk.Button(label='Failed')
         self._filter_failed.get_style_context().add_class('button-default')
         self._filter_failed.connect('clicked', lambda _: self._set_filter('failed'))
         toolbar.pack_start(self._filter_failed, False, False, 0)
@@ -76,28 +68,48 @@ class QueueScreen(Gtk.Box):
 
         self._list = Gtk.ListBox()
         self._list.set_selection_mode(Gtk.SelectionMode.NONE)
-
-        self._rebuild_list()
-
         scroll.add(self._list)
         self.pack_start(scroll, True, True, 0)
 
-        self._current_filter = 'pending'
+    def refresh(self):
+        store = getattr(self._window, 'store', None)
+        if not store:
+            return
+
+        pending = store.list_videos(status='pending', limit=200)
+        failed = store.list_videos(status='failed', limit=200)
+        published = store.list_videos(status='posted', limit=200)
+
+        self._all_items = pending + failed + published
+        self._filter_pending.set_label(f'Pending {len(pending)}')
+        self._filter_failed.set_label(f'Failed {len(failed)}')
+
+        self._rebuild_list()
 
     def _rebuild_list(self, search_text: str = ''):
         for child in self._list.get_children():
             self._list.remove(child)
 
-        for title, channel, status in self._all_items:
-            if status != self._filter:
-                continue
+        items_by_status = {'pending': [], 'failed': [], 'posted': []}
+        for item in self._all_items:
+            s = item.get('status', 'pending')
+            items_by_status.get(s, []).append(item)
+
+        items = items_by_status.get(self._filter, [])
+
+        for v in items:
+            title = v.get('title') or ''
             if search_text and search_text.lower() not in title.lower():
                 continue
+            chan = v.get('channel_name') or ''
+            ts = v.get('first_seen_ts') or 0
+            label = f'discovered {_relative_time(ts)}' if ts else ''
+            status = v.get('status', 'pending')
             row = QueueRow(
                 title=title,
-                channel=channel,
-                timestamp='discovered 12 min ago',
-                status=status,
+                channel=chan,
+                timestamp=label,
+                status='posted' if status == 'posted' else status,
             )
             self._list.add(row)
 
@@ -122,9 +134,13 @@ class QueueScreen(Gtk.Box):
         ctx.add_class('button-primary')
         self._rebuild_list(search_text=self._search.get_text().strip())
 
-    def set_items(self, items: list):
-        self._all_items = list(items)
-        self._rebuild_list(search_text=self._search.get_text().strip())
 
-    def refresh(self):
-        pass
+def _relative_time(ts: int) -> str:
+    diff = int(datetime.now().timestamp()) - ts
+    if diff < 60:
+        return 'just now'
+    if diff < 3600:
+        return f'{diff // 60} min ago'
+    if diff < 86400:
+        return f'{diff // 3600} hours ago'
+    return f'{diff // 86400} days ago'

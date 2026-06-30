@@ -93,9 +93,7 @@ class DesktopAppManager:
                         'active_sources': getattr(metrics, 'active_sources', 0),
                     }
 
-                queue_count = len(
-                    self._store.get_videos(status='pending')
-                )
+                queue_count = self._store.count_pending()
                 self._schedule_update({
                     'metrics': metrics_dict,
                     'queue_count': queue_count,

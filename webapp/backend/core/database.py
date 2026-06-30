@@ -357,6 +357,24 @@ class Store:
         self.conn.execute("UPDATE videos SET published_ts=? WHERE source_id=? AND entry_key=? AND published_ts IS NULL", (published_ts, source_id, entry_key))
         self.conn.commit()
 
+    def list_videos(self, status: str = 'pending', limit: int = 50, offset: int = 0) -> list[dict]:
+        cur = self.conn.execute(
+            """
+            SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
+                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url,
+                   v.thumbnail_url, v.status, v.first_seen_ts, v.published_ts, v.error, v.nostr_event_id
+            FROM videos v
+            WHERE v.status=?
+            ORDER BY COALESCE(v.published_ts, v.first_seen_ts) DESC
+            LIMIT ? OFFSET ?
+            """,
+            (status, limit, offset),
+        )
+        columns = ["id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
+                   "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
+                   "thumbnail_url", "status", "first_seen_ts", "published_ts", "error", "nostr_event_id"]
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
+
     def next_pending_eligible(self, now_ts: int, max_per_day_per_source: int) -> Optional[dict]:
         cur = self.conn.execute(
             """

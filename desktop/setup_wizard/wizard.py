@@ -107,8 +107,8 @@ class SetupWizard(Gtk.Assistant):
         self._store.set_setting('setup_complete', 'true')
 
     def update_summary(self):
-        source_count = len(self._store.get_sources()) if hasattr(self._store, 'get_sources') else 1
-        relay_count = len(self._store.get_relays()) if hasattr(self._store, 'get_relays') else 1
+        source_count = len(self._store.list_sources()) if hasattr(self._store, 'list_sources') else 1
+        relay_count = len(self._store.list_relays()) if hasattr(self._store, 'list_relays') else 1
         self._summary.set_text(
             f'{source_count} source \u00B7 {relay_count} relays \u00B7 identity configured'
         )

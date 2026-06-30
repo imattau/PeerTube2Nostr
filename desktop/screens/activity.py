@@ -21,9 +21,7 @@ class ActivityScreen(Gtk.Box):
         title.set_halign(Gtk.Align.START)
         title_box.pack_start(title, False, False, 0)
 
-        subtitle = Gtk.Label(
-            label='Live application and publishing events'
-        )
+        subtitle = Gtk.Label(label='Live application and publishing events')
         subtitle.get_style_context().add_class('body')
         subtitle.set_halign(Gtk.Align.START)
         subtitle.set_margin_top(8)
@@ -35,9 +33,7 @@ class ActivityScreen(Gtk.Box):
         header.pack_end(pause_btn, False, False, 0)
         self.pack_start(header, False, False, 0)
 
-        toolbar = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL, spacing=8
-        )
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         toolbar.set_margin_top(24)
         toolbar.set_margin_bottom(16)
 
@@ -68,16 +64,12 @@ class ActivityScreen(Gtk.Box):
         self._log_viewer = LogViewer()
         self.pack_start(self._log_viewer, True, True, 0)
 
-        self._log_viewer.append_log('14:32:20', 'INFO',
-            'Published "GNOME 48 Release Highlights"')
-        self._log_viewer.append_log('14:32:16', 'ERROR',
-            'relay.example timed out')
-        self._log_viewer.append_log('14:32:11', 'WARN',
-            'nos.lol responded in 420 ms')
-        self._log_viewer.append_log('14:32:09', 'INFO',
-            'Found 2 new videos')
-        self._log_viewer.append_log('14:32:08', 'INFO',
-            'Polling GNOME Foundation')
-
     def refresh(self):
-        pass
+        self._log_viewer.clear()
+        manager = getattr(self._window, 'manager', None)
+        if manager:
+            for line in manager.get_logs(max_lines=200):
+                parts = line.split('  ', 2)
+                if len(parts) == 3:
+                    ts, level, msg = parts
+                    self._log_viewer.append_log(ts.strip(), level.strip(), msg.strip())
