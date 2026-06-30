@@ -8,7 +8,7 @@ gi.require_version('GLib', '2.0')
 from gi.repository import GLib
 
 from desktop.core import Store, Runner, RateLimiter, IngestPipeline
-from desktop.core.models import DashboardMetrics
+from desktop.core import DashboardMetrics
 
 
 class DesktopAppManager:
