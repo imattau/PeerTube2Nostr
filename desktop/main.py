@@ -11,8 +11,11 @@ import sys
 import os
 
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_backend_dir = os.path.join(_project_root, 'webapp', 'backend')
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from desktop.app import main
 
