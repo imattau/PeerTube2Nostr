@@ -1,15 +1,11 @@
 #!/usr/bin/make -f
 export DH_VERBOSE=1
-export DH_VIRTUALENV_INSTALLROOT=/usr/share/venvs
 
 %:
-	dh $@ --with python-virtualenv
+	dh $@
 
-override_dh_virtualenv:
-	dh_virtualenv \
-		--python /usr/bin/python3 \
-		--pip-tool pip \
-		--install-package peertube2nostr
+override_dh_auto_build:
+	pip wheel --no-deps --no-build-isolation -w dist .
 
 override_dh_auto_install:
-	# nothing to install here, we'll do it in dh_virtualenv_install
+	pip install --no-deps --root=debian/peertube2nostr-desktop --prefix=/usr dist/peertube2nostr-*.whl

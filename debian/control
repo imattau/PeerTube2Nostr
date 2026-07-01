@@ -3,11 +3,9 @@ Section: net
 Priority: optional
 Maintainer: Matt Thomson <peertube2nostr@users.noreply.github.com>
 Build-Depends: debhelper-compat (= 13),
-               dh-virtualenv,
                python3-all,
                python3-setuptools,
                python3-pip,
-               python3-venv,
                dh-python
 Standards-Version: 4.6.2
 Homepage: https://github.com/mattthomson/PeerTube2Nostr
