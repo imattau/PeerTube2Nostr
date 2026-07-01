@@ -29,31 +29,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up RPM build directories
-        run: |
-          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-
-      - name: Create source tarball
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          tar czf ~/rpmbuild/SOURCES/peertube2nostr-${VERSION}.tar.gz \
-            --transform "s,^,peertube2nostr-${VERSION}/," \
-            .
-
       - name: Get version from tag
         id: version
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "version=${{ github.ref_name }}" | sed 's/^v//' >> $GITHUB_OUTPUT
           else
-            echo "version=0.1.0" >> $GITHUB_OUTPUT
+            echo "version=$(grep '^Version:' peertube2nostr.spec | awk '{print $2}')" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update spec file version
+      - name: Set up RPM build directories
+        run: |
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+      - name: Create source tarball
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/^Version:        .*/Version:        $VERSION/" peertube2nostr.spec
-          sed -i "s/^Release:        .*/Release:        1%{?dist}/" peertube2nostr.spec
+          tar czf ~/rpmbuild/SOURCES/peertube2nostr-${VERSION}.tar.gz \
+            --transform "s,^,peertube2nostr-${VERSION}/," \
+            .
 
       - name: Build RPM package
         run: |

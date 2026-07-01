@@ -38,13 +38,13 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "version=${{ github.ref_name }}" | sed 's/^v//' >> $GITHUB_OUTPUT
           else
-            echo "version=0.1.0" >> $GITHUB_OUTPUT
+            echo "version=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')" >> $GITHUB_OUTPUT
           fi
 
       - name: Update changelog version
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/peertube2nostr (0.1.0)/peertube2nostr ($VERSION)/" debian/changelog
+          sed -i "0,/peertube2nostr/s/peertube2nostr ([0-9.]*)/peertube2nostr ($VERSION)/" debian/changelog
 
       - name: Build source package
         run: dpkg-source -b .
