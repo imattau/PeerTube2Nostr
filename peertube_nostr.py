@@ -30,7 +30,7 @@ Examples
    NOSTR_NSEC="nsec1..." python peertube_nostr.py run --db peertube.db
 """
 
-__version__ = "0.0.2"
+__version__ = "0.1.0"
 
 import argparse
 import calendar

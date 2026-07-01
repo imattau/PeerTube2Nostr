@@ -1,5 +1,5 @@
 Name:           peertube2nostr
-Version:        0.0.2
+Version:        0.1.0
 Release:        1%{?dist}
 Summary:        PeerTube to Nostr publisher - GNOME desktop application
 
@@ -72,5 +72,8 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/peertube2nostr.deskto
 %{_datadir}/icons/hicolor/*/apps/peertube2nostr.png
 
 %changelog
+* Wed Jul 01 2026 Matt Thomson <peertube2nostr@users.noreply.github.com> - 0.1.0-1
+- Add system tray icon for minimize-to-background on GNOME
+
 * Wed Jul 01 2026 Matt Thomson <peertube2nostr@users.noreply.github.com> - 0.0.2-1
 - Initial RPM release
