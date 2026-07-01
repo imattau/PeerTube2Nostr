@@ -11,10 +11,9 @@ from desktop.manager import DesktopAppManager
 
 
 def _default_db_path() -> str:
-    return os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        'peertube2nostr.db',
-    )
+    data_dir = os.path.join(GLib.get_user_data_dir(), 'peertube2nostr')
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, 'peertube2nostr.db')
 
 
 class PeerTube2NostrApp(Gtk.Application):
