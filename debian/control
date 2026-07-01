@@ -2,8 +2,7 @@ Source: peertube2nostr
 Section: net
 Priority: optional
 Maintainer: Matt Thomson <peertube2nostr@users.noreply.github.com>
-Build-Depends: build-essential:native,
-               debhelper-compat (= 13),
+Build-Depends: debhelper-compat (= 13),
                dh-virtualenv,
                python3-all,
                python3-setuptools,
