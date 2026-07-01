@@ -68,6 +68,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/peertube2nostr.deskto
 %{python3_sitelib}/core/
 %{python3_sitelib}/desktop/
 %{python3_sitelib}/%{name}-%{version}.dist-info/
+%{_bindir}/%{name}-desktop
 %{_datadir}/applications/peertube2nostr.desktop
 %{_datadir}/icons/hicolor/*/apps/peertube2nostr.png
 
