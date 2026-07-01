@@ -66,7 +66,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/peertube2nostr.deskto
 %license LICENSE
 %doc README.md
 %{python3_sitelib}/core/
-%{python3_sitelib}/%{name}/
+%{python3_sitelib}/desktop/
 %{python3_sitelib}/%{name}-%{version}.dist-info/
 %{_datadir}/applications/peertube2nostr.desktop
 %{_datadir}/icons/hicolor/*/apps/peertube2nostr.png
