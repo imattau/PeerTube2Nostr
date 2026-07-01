@@ -53,12 +53,12 @@ mkdir -p %{buildroot}%{_datadir}/icons/hicolor/64x64/apps
 mkdir -p %{buildroot}%{_datadir}/icons/hicolor/96x96/apps
 mkdir -p %{buildroot}%{_datadir}/icons/hicolor/128x128/apps
 
-install -m 0644 %{_sourcedir}/%{name}-%{version}/debian/peertube2nostr.desktop %{buildroot}%{_datadir}/applications/
-install -m 0644 %{_sourcedir}/%{name}-%{version}/desktop/styles/icons/app_icon_32.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/peertube2nostr.png
-install -m 0644 %{_sourcedir}/%{name}-%{version}/desktop/styles/icons/app_icon_48.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/peertube2nostr.png
-install -m 0644 %{_sourcedir}/%{name}-%{version}/desktop/styles/icons/app_icon_64.png %{buildroot}%{_datadir}/icons/hicolor/64x64/apps/peertube2nostr.png
-install -m 0644 %{_sourcedir}/%{name}-%{version}/desktop/styles/icons/app_icon_96.png %{buildroot}%{_datadir}/icons/hicolor/96x96/apps/peertube2nostr.png
-install -m 0644 %{_sourcedir}/%{name}-%{version}/desktop/styles/icons/app_icon_128.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/peertube2nostr.png
+install -m 0644 debian/peertube2nostr.desktop %{buildroot}%{_datadir}/applications/
+install -m 0644 desktop/styles/icons/app_icon_32.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/peertube2nostr.png
+install -m 0644 desktop/styles/icons/app_icon_48.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/peertube2nostr.png
+install -m 0644 desktop/styles/icons/app_icon_64.png %{buildroot}%{_datadir}/icons/hicolor/64x64/apps/peertube2nostr.png
+install -m 0644 desktop/styles/icons/app_icon_96.png %{buildroot}%{_datadir}/icons/hicolor/96x96/apps/peertube2nostr.png
+install -m 0644 desktop/styles/icons/app_icon_128.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/peertube2nostr.png
 
 desktop-file-validate %{buildroot}%{_datadir}/applications/peertube2nostr.desktop
 
