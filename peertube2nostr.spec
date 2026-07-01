@@ -12,7 +12,6 @@ BuildRequires:  python3-devel
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-pip
 BuildRequires:  python3-wheel
-BuildRequires:  python3-build
 BuildRequires:  python3-virtualenv
 BuildRequires:  desktop-file-utils
 
@@ -42,7 +41,7 @@ Features:
 %autosetup -n %{name}-%{version}
 
 %build
-python3 -m build --wheel --no-isolation
+pip wheel --no-deps --no-build-isolation -w dist .
 
 %install
 pip install --no-deps --root=%{buildroot} --prefix=%{_prefix} dist/%{name}-%{version}-py3-none-any.whl
