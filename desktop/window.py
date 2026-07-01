@@ -46,6 +46,8 @@ class MainWindow(Gtk.ApplicationWindow):
 
         self._build_ui()
 
+        self.connect('delete-event', self._on_delete_event)
+
     def _build_ui(self):
         self._build_header_bar()
         body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -78,6 +80,7 @@ class MainWindow(Gtk.ApplicationWindow):
         menu_btn.set_name('header-menu-btn')
         menu_btn.get_style_context().add_class('button-icon')
         menu_model = Gio.Menu()
+        menu_model.append('Minimize to Tray', 'app.minimize-to-tray')
         menu_model.append('About', 'app.about')
         menu_model.append('Quit', 'app.quit')
         menu_btn.set_menu_model(menu_model)
@@ -228,6 +231,13 @@ class MainWindow(Gtk.ApplicationWindow):
             screen = getattr(self, f'_screen_{self._current_view}')
             if hasattr(screen, 'refresh'):
                 screen.refresh()
+
+    def _on_delete_event(self, _widget, _event):
+        app = self.get_application()
+        if app and getattr(app, 'tray', None) and app.tray.is_available:
+            self.hide()
+            return True
+        return False
 
     def set_status(self, running: bool, label: str = ''):
         ctx = self._dot.get_style_context()

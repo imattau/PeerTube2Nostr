@@ -23,6 +23,7 @@ Requires:       python3-keyring
 Requires:       python3-requests
 Requires:       python3-feedparser
 Recommends:     adwaita-icon-theme
+Recommends:     libappindicator-gtk3
 
 %description
 PeerTube2Nostr publishes PeerTube channel videos to Nostr relays with

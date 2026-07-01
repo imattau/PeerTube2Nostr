@@ -8,6 +8,7 @@ from gi.repository import Gtk, Gio, Gdk, GLib
 
 from desktop.core import Store, UrlNormaliser
 from desktop.manager import DesktopAppManager
+from desktop.tray import TrayIcon
 
 
 def _default_db_path() -> str:
@@ -25,6 +26,7 @@ class PeerTube2NostrApp(Gtk.Application):
         self.store: Store | None = None
         self.manager: DesktopAppManager | None = None
         self.window: Gtk.ApplicationWindow | None = None
+        self.tray: TrayIcon | None = None
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -47,6 +49,10 @@ class PeerTube2NostrApp(Gtk.Application):
         quit_action.connect('activate', lambda *_: self._on_quit())
         self.add_action(quit_action)
         self.set_accels_for_action('app.quit', ['<Primary>q'])
+
+        minimize_action = Gio.SimpleAction.new('minimize-to-tray', None)
+        minimize_action.connect('activate', lambda *_: self._on_minimize_to_tray())
+        self.add_action(minimize_action)
 
     def do_activate(self):
         if self.window is not None:
@@ -104,7 +110,13 @@ class PeerTube2NostrApp(Gtk.Application):
     def _on_quit(self):
         if self.manager:
             self.manager.stop()
+        if self.tray:
+            self.tray = None
         self.quit()
+
+    def _on_minimize_to_tray(self):
+        if self.window:
+            self.window.hide()
 
     def _show_main_window(self):
         from desktop.window import MainWindow
@@ -114,6 +126,15 @@ class PeerTube2NostrApp(Gtk.Application):
         GLib.timeout_add_seconds(10, self._on_periodic_refresh)
         if self.manager:
             self.manager.start()
+
+        self.tray = TrayIcon(
+            on_show=self._on_tray_show,
+            on_quit=self._on_quit,
+        )
+
+    def _on_tray_show(self):
+        if self.window:
+            self.window.present()
 
 
 def main():

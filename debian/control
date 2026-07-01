@@ -24,7 +24,8 @@ Depends: ${misc:Depends},
          python3-keyring,
          python3-requests,
          python3-feedparser,
-Recommends: gnome-themes-standard
+Recommends: gnome-themes-standard,
+             gir1.2-appindicator3-0.1
 Description: PeerTube to Nostr publisher - GNOME desktop application
  PeerTube2Nostr publishes PeerTube channel videos to Nostr relays with
  proper attribution. This package provides the native GNOME 3 desktop
