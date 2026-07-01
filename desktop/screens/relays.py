@@ -1,6 +1,8 @@
+import threading
+
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
+from gi.repository import Gtk, GLib
 
 from desktop.widgets.action_row import ActionRow
 from desktop.widgets.badge import Badge
@@ -39,11 +41,11 @@ class RelaysScreen(Gtk.Box):
         add_btn.connect('clicked', self._on_add)
         header.pack_end(add_btn, False, False, 0)
 
-        import_btn = Gtk.Button(label='Import from NIP-65')
-        import_btn.get_style_context().add_class('button-default')
-        import_btn.set_margin_end(8)
-        import_btn.connect('clicked', self._on_import_nip65)
-        header.pack_end(import_btn, False, False, 0)
+        self._import_btn = Gtk.Button(label='Import from NIP-65')
+        self._import_btn.get_style_context().add_class('button-default')
+        self._import_btn.set_margin_end(8)
+        self._import_btn.connect('clicked', self._on_import_nip65)
+        header.pack_end(self._import_btn, False, False, 0)
 
         self.pack_start(header, False, False, 0)
 
@@ -110,9 +112,38 @@ class RelaysScreen(Gtk.Box):
             dialog.run()
             dialog.destroy()
             return
-        count = import_nip65_relays(
-            nsec, store, UrlNormaliser(), relays, log_fn=print,
-        )
+        self._import_btn.set_sensitive(False)
+        self._import_btn.set_label('Importing...')
+
+        def _do_import():
+            try:
+                count = import_nip65_relays(
+                    nsec, store, UrlNormaliser(), relays, log_fn=print,
+                )
+                GLib.idle_add(self._on_import_nip65_result, count, None)
+            except Exception as e:
+                GLib.idle_add(self._on_import_nip65_result, 0, str(e))
+
+        t = threading.Thread(target=_do_import, daemon=True)
+        t.start()
+
+    def _on_import_nip65_result(self, count, error):
+        self._import_btn.set_sensitive(True)
+        self._import_btn.set_label('Import from NIP-65')
+
+        if error:
+            dialog = Gtk.MessageDialog(
+                transient_for=self._window,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text='Import failed',
+                secondary_text=str(error),
+            )
+            dialog.run()
+            dialog.destroy()
+            return
+
         dialog = Gtk.MessageDialog(
             transient_for=self._window,
             modal=True,

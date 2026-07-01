@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peertube2nostr"
+version = "0.0.2"
+description = "Publish PeerTube channel videos to Nostr with proper attribution."
+license = "LGPL-2.1-only"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "feedparser>=6.0.11",
+    "pynostr>=0.7.0",
+    "keyring",
+]
+
+[project.optional-dependencies]
+desktop = [
+    "PyGObject",
+]
+
+[project.scripts]
+peertube2nostr-desktop = "desktop.app:main"
+
+[tool.setuptools]
+packages = [
+    "core",
+    "desktop",
+    "desktop.core",
+    "desktop.dialogs",
+    "desktop.screens",
+    "desktop.setup_wizard",
+    "desktop.widgets",
+]
+
+[tool.setuptools.package-dir]
+"core" = "webapp/backend/core"
+
+[tool.setuptools.package-data]
+"desktop" = ["styles/**", "styles/icons/**"]

@@ -6,38 +6,59 @@ from .models import IngestedItem
 from .database import Store
 
 class PeerTubeClient:
-    def __init__(self, n: UrlNormaliser) -> None:
+    def __init__(self, n: UrlNormaliser, log_fn=None) -> None:
         self.n = n
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "peertube-nostr-publisher/0.1"})
+        self.log_fn = log_fn
 
-    def _get_json(self, url: str, params: Optional[dict] = None) -> Optional[dict]:
+    def _get_json(self, url: str, params: Optional[dict] = None, log_fn=None) -> Optional[dict]:
         try:
             r = self.session.get(url, params=params, timeout=15)
             r.raise_for_status()
             return r.json()
-        except Exception:
+        except Exception as e:
+            if log_fn:
+                log_fn(f"HTTP error fetching {url}: {e}")
             return None
 
     def list_channel_videos(self, api_base: str, channel: str, limit: int = 50) -> Optional[List[Dict[str, Any]]]:
-        base = self.n.normalise_http_url(api_base)
+        base = self.n.normalise_http_url(api_base).rstrip('/')
         url = f"{base}/api/v1/video-channels/{channel}/videos"
         params = {"start": 0, "count": min(limit, 100), "sort": "-publishedAt"}
-        data = self._get_json(url, params=params)
+        data = self._get_json(url, params=params, log_fn=self.log_fn)
         if isinstance(data, dict) and isinstance(data.get("data"), list):
             return data["data"]
+        if self.log_fn:
+            self.log_fn(f"API returned no data for {url}")
         return None
 
     def parse_rss(self, rss_url: str) -> List[dict]:
-        d = feedparser.parse(rss_url)
-        return list(reversed(d.entries or []))
+        try:
+            r = self.session.get(rss_url, timeout=15)
+            r.raise_for_status()
+            d = feedparser.parse(r.text)
+            entries = list(reversed(d.entries or []))
+            if not entries and self.log_fn:
+                self.log_fn(f"RSS feed {rss_url} returned 0 entries")
+            return entries
+        except Exception as e:
+            if self.log_fn:
+                self.log_fn(f"RSS error fetching {rss_url}: {e}")
+            return []
 
     def enrich_video(self, watch_url: str) -> tuple:
         x = self.n.extract_watch_id(watch_url)
-        if not x: return (None,) * 15
+        if not x:
+            if self.log_fn:
+                self.log_fn(f"Could not extract watch ID from {watch_url}")
+            return (None,) * 15
         base, vid = x
-        v = self._get_json(f"{base}/api/v1/videos/{vid}")
-        if not isinstance(v, dict): return (base, vid) + (None,) * 13
+        v = self._get_json(f"{base}/api/v1/videos/{vid}", log_fn=self.log_fn)
+        if not isinstance(v, dict):
+            if self.log_fn:
+                self.log_fn(f"Could not enrich video {watch_url} (API returned no data)")
+            return (base, vid) + (None,) * 13
         
         hls = self._pick_hls_url(v)
         mp4, w, h = self._pick_best_mp4(v)

@@ -233,10 +233,16 @@ class Store:
             norm = self.n.normalise_relay_url(relay_url)
         except Exception:
             norm = None
-        self.conn.execute(
-            "UPDATE relays SET last_used_ts=?, last_error=?, latency_ms=NULL WHERE relay_url_norm=? OR relay_url=?",
-            (ts, (error[:1000] if error else None), norm, relay_url),
-        )
+        if error:
+            self.conn.execute(
+                "UPDATE relays SET last_used_ts=?, last_error=?, latency_ms=NULL WHERE relay_url_norm=? OR relay_url=?",
+                (ts, error[:1000], norm, relay_url),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE relays SET last_used_ts=?, last_error=NULL WHERE relay_url_norm=? OR relay_url=?",
+                (ts, norm, relay_url),
+            )
         self.conn.commit()
 
     def update_relay_latency(self, relay_url: str, latency_ms: int) -> None:
@@ -353,24 +359,29 @@ class Store:
         row = self.conn.execute("SELECT 1 FROM videos WHERE source_id=? AND entry_key=? LIMIT 1", (source_id, entry_key)).fetchone()
         return row is not None
 
-    def insert_pending(self, item: IngestedItem) -> None:
+    def insert_pending(self, item: IngestedItem) -> bool:
         ts = self.n.now_ts()
-        self.conn.execute(
-            """
-            INSERT OR IGNORE INTO videos
-            (source_id, entry_key, watch_url, watch_url_norm, peertube_base, peertube_video_id,
-             peertube_instance, channel_name, channel_url, account_name, account_url,
-             title, summary, hls_url, direct_url, thumbnail_url, published_ts,
-             duration, width, height, status, first_seen_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-            """,
-            (item.source_id, item.entry_key, item.watch_url, self.n.normalise_watch_url(item.watch_url),
-             item.peertube_base, item.peertube_video_id, item.peertube_instance, item.channel_name,
-             item.channel_url, item.account_name, item.account_url, item.title, item.summary,
-             item.hls_url, item.mp4_url, item.thumbnail_url, item.published_ts,
-             item.duration, item.width, item.height, ts)
-        )
-        self.conn.commit()
+        try:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO videos
+                (source_id, entry_key, watch_url, watch_url_norm, peertube_base, peertube_video_id,
+                 peertube_instance, channel_name, channel_url, account_name, account_url,
+                 title, summary, hls_url, direct_url, thumbnail_url, published_ts,
+                 duration, width, height, status, first_seen_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (item.source_id, item.entry_key, item.watch_url, self.n.normalise_watch_url(item.watch_url),
+                 item.peertube_base, item.peertube_video_id, item.peertube_instance, item.channel_name,
+                 item.channel_url, item.account_name, item.account_url, item.title, item.summary,
+                 item.hls_url, item.mp4_url, item.thumbnail_url, item.published_ts,
+                 item.duration, item.width, item.height, ts)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            self.conn.rollback()
+            return False
 
     def update_published_ts_if_null(self, source_id: int, entry_key: str, published_ts: int) -> None:
         self.conn.execute("UPDATE videos SET published_ts=? WHERE source_id=? AND entry_key=? AND published_ts IS NULL", (published_ts, source_id, entry_key))

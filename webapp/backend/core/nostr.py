@@ -67,16 +67,35 @@ class NostrPublisher:
     def publish(nsec: str, relays: List[str], content: str, kind: int, tags: list[list[str]]) -> str:
         priv = PrivateKey.from_nsec(nsec)
         pub_hex = priv.public_key.hex()
-        ev = Event(kind=kind, content=content, tags=tags)
-        # Handle different pynostr versions
-        if hasattr(ev, "pubkey"): ev.pubkey = pub_hex
-        elif hasattr(ev, "public_key"): ev.public_key = pub_hex
-
-        if hasattr(priv, "sign_event"): priv.sign_event(ev)
-        else: ev.sign(priv.hex())
+        try:
+            ev = Event(kind=kind, public_key=pub_hex, content=content, tags=tags)
+        except TypeError:
+            try:
+                ev = Event(kind=kind, pubkey=pub_hex, content=content, tags=tags)
+            except TypeError:
+                ev = Event(content=content, kind=kind, tags=tags)
+                if hasattr(ev, "pub_key"):
+                    setattr(ev, "pub_key", pub_hex)
+                elif hasattr(ev, "public_key"):
+                    setattr(ev, "public_key", pub_hex)
+        if hasattr(priv, "sign_event"):
+            priv.sign_event(ev)
+        elif hasattr(ev, "sign"):
+            try:
+                ev.sign(priv)
+            except TypeError:
+                priv_hex = priv.hex()
+                ev.sign(priv_hex)
+        else:
+            raise RuntimeError("Unable to sign event with current pynostr version.")
 
         rm = RelayManager(timeout=6)
         for r in relays: rm.add_relay(r)
         rm.publish_event(ev)
         rm.run_sync()
+        try:
+            if hasattr(rm, "close_connections"):
+                rm.close_connections()
+        except Exception:
+            pass
         return ev.id

@@ -59,17 +59,28 @@ class Runner:
             self._ingest_source(s, api_limit, lookback_days)
 
     def check_relays_health(self) -> None:
+        from pynostr.filters import FiltersList, Filters
         relays = self.store.get_enabled_relays()
         for r in relays:
             start = time.time()
             try:
-                # Basic connection test using RelayManager
                 from pynostr.relay_manager import RelayManager
                 rm = RelayManager(timeout=5)
                 rm.add_relay(r)
-                # pynostr doesn't always expose a simple ping, but adding and closing tests basic reachability
+                sub_id = f"health-{int(time.time() * 1000)}"
+                filters = FiltersList([Filters(limit=0)])
+                rm.add_subscription_on_all_relays(sub_id, filters)
+                rm.run_sync()
                 latency = int((time.time() - start) * 1000)
-                self.store.update_relay_latency(r, latency)
+                mp = rm.message_pool
+                if mp.has_eose_notices() or mp.has_events() or mp.has_notices():
+                    self.store.update_relay_latency(r, latency)
+                else:
+                    self.store.mark_relay_used(r, "No response from relay")
+                try:
+                    rm.close_connections()
+                except Exception:
+                    pass
             except Exception as e:
                 self.store.mark_relay_used(r, str(e))
 
@@ -92,24 +103,28 @@ class Runner:
                     lambda v: v.get("name", ""), lambda v: v.get("description", ""),
                     lambda v: parse_any_timestamp(v.get("publishedAt")), cutoff, s.get("api_channel_url"))
                 self.store.mark_source_polled(sid, None)
-                if ins: self.log_fn(f"[source {sid}] API new items: {ins}")
+                self.log_fn(f"[source {sid}] API ingested: {ins} new, {skp} skipped")
                 return
             err = "API failed; trying RSS"
 
         if rss_url:
             try:
                 entries = self.pt.parse_rss(rss_url)
+                if not entries:
+                    self.log_fn(f"[source {sid}] RSS returned 0 entries from {rss_url}")
                 ins, skp = self.ingest.ingest_entries(sid, entries,
                     lambda e: e.get("id") or e.get("link"), lambda e: e.get("link"),
                     lambda e: e.get("title", ""), lambda e: e.get("summary", ""),
                     lambda e: int(calendar.timegm(e.published_parsed)) if hasattr(e, "published_parsed") else None,
                     cutoff, None)
                 self.store.mark_source_polled(sid, err)
-                if ins: self.log_fn(f"[source {sid}] RSS new items: {ins}")
+                self.log_fn(f"[source {sid}] RSS ingested: {ins} new, {skp} skipped")
             except Exception as e:
                 self.store.mark_source_polled(sid, f"{err or ''} RSS failed: {e}")
+                self.log_fn(f"[source {sid}] RSS exception: {e}")
         else:
             self.store.mark_source_polled(sid, err or "No RSS fallback and API failed")
+            self.log_fn(f"[source {sid}] No RSS fallback and API failed")
 
     def publish_one_pending(self, nsec: str, relays: List[str], pending: Optional[dict] = None) -> bool:
         if pending is None:

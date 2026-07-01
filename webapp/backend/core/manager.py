@@ -15,7 +15,7 @@ class AppManager:
         self.n = UrlNormaliser()
         self.store = Store(db_path, self.n)
         self.store.init_schema()
-        self.pt = PeerTubeClient(self.n)
+        self.pt = PeerTubeClient(self.n, log_fn=self._log)
         self.pub = NostrPublisher()
         self.runner = None
         self._thread = None

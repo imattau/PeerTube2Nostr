@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PeerTube2Nostr
+GenericName=PeerTube to Nostr Publisher
+Comment=Publish PeerTube channel videos to Nostr
+Exec=/usr/share/venvs/peertube2nostr/bin/peertube2nostr-desktop
+Icon=peertube2nostr
+Terminal=false
+Categories=Network;Video;AudioVideo;
+Keywords=peertube;nostr;video;publish;

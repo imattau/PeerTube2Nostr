@@ -70,6 +70,10 @@ class ActivityScreen(Gtk.Box):
     def refresh(self):
         self._log_viewer.clear()
         manager = getattr(self._window, 'manager', None)
+        if not manager:
+            app = self._window.get_application()
+            if app:
+                manager = getattr(app, 'manager', None)
         if manager:
             for line in manager.get_logs(max_lines=200):
                 parts = line.split('  ', 2)

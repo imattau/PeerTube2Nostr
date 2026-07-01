@@ -1,3 +1,5 @@
+import threading
+
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
@@ -106,17 +108,6 @@ class SetupWizard(Gtk.Assistant):
                 err_dialog.run()
                 err_dialog.destroy()
 
-        if self._pages['relay'].get_import_nip65():
-            nsec = get_stored_nsec(self._store.db_path)
-            if nsec:
-                bootstrap = [relay_url] if relay_url else []
-                if not bootstrap:
-                    bootstrap = ["wss://relay.damus.io", "wss://nos.lol"]
-                import_nip65_relays(
-                    nsec, self._store, UrlNormaliser(), bootstrap,
-                    log_fn=print,
-                )
-
         if source_url:
             try:
                 self._store.add_channel_source(source_url)
@@ -126,7 +117,34 @@ class SetupWizard(Gtk.Assistant):
                 except Exception:
                         pass
 
+        if self._pages['relay'].get_import_nip65():
+            nsec = get_stored_nsec(self._store.db_path)
+            if nsec:
+                bootstrap = [relay_url] if relay_url else []
+                if not bootstrap:
+                    bootstrap = ["wss://relay.damus.io", "wss://nos.lol"]
+
+                self._summary.set_text('Syncing NIP-65 relay list...')
+
+                def _do_nip65_import():
+                    try:
+                        import_nip65_relays(
+                            nsec, self._store, UrlNormaliser(), bootstrap,
+                            log_fn=print,
+                        )
+                        GLib.idle_add(self._finish_apply)
+                    except Exception:
+                        GLib.idle_add(self._finish_apply)
+
+                t = threading.Thread(target=_do_nip65_import, daemon=True)
+                t.start()
+                return
+
+        self._finish_apply()
+
+    def _finish_apply(self):
         self._store.set_setting('setup_complete', 'true')
+        self.destroy()
 
     def update_summary(self):
         source_count = len(self._store.list_sources()) if hasattr(self._store, 'list_sources') else 1

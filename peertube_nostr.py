@@ -53,6 +53,7 @@ from urllib.parse import urlparse, urlunparse
 import feedparser
 import requests
 from pynostr.event import Event
+from pynostr.filters import Filters, FiltersList
 from pynostr.key import PrivateKey
 from pynostr.relay_manager import RelayManager
 try:
@@ -763,6 +764,16 @@ class Store:
         self.conn.commit()
 
     # Videos
+    def get_metrics(self) -> dict:
+        now_ts = int(time.time())
+        day_start = now_ts - 86400
+        return {
+            "pending": self.count_pending(),
+            "posted_today": self.count_posted_since(day_start),
+            "failed": self.count_failed(),
+            "active_sources": self.count_sources(),
+        }
+
     def count_pending(self) -> int:
         row = self.conn.execute("SELECT COUNT(*) FROM videos WHERE status='pending'").fetchone()
         return int(row[0]) if row else 0
@@ -3379,7 +3390,7 @@ def _fetch_latest_profile_events(relays: list[str], pubkey_hex: str, timeout_sec
         except Exception:
             relay_errors += 1
 
-    filters = [{"authors": [pubkey_hex], "kinds": [0, 10002]}]
+    filters = FiltersList([Filters(authors=[pubkey_hex], kinds=[0, 10002])])
 
     try:
         if hasattr(rm, "add_subscription"):

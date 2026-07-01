@@ -9,6 +9,8 @@ from gi.repository import GLib
 
 from desktop.core import Store, Runner, RateLimiter, IngestPipeline
 from desktop.core import DashboardMetrics
+from desktop.core import PeerTubeClient, NostrPublisher, UrlNormaliser
+from core.database import get_stored_nsec
 
 
 class DesktopAppManager:
@@ -23,25 +25,21 @@ class DesktopAppManager:
         self._error_state: str | None = None
 
         try:
-            rate = RateLimiter(
-                min_interval=int(
-                    store.get_setting('publish_min_interval') or '20'
-                ),
-                hourly_cap=int(
-                    store.get_setting('publish_hourly_cap') or '3'
-                ),
-                daily_source_cap=int(
-                    store.get_setting('publish_daily_source_limit') or '1'
-                ),
-            )
+            now_ts = int(time.time())
+            rate = RateLimiter(store=store, now_ts=now_ts)
+            n = UrlNormaliser()
+            pt = PeerTubeClient(n, log_fn=self._log)
+            pub = NostrPublisher()
             self._runner = Runner(
                 store=store,
-                rate_limiter=rate,
-                publish_callback=self._on_publish,
-                error_callback=self._on_error,
+                pt=pt,
+                pub=pub,
+                n=n,
+                log_fn=self._log,
+                status_fn=None,
             )
         except Exception as e:
-            self._log('ERROR', f'Failed to initialise manager: {e}')
+            self._log(f'Failed to initialise manager: {e}', level='ERROR')
             self._error_state = 'init_failed'
 
     def start(self):
@@ -51,14 +49,14 @@ class DesktopAppManager:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        self._log('INFO', 'Background runner started')
+        self._log('Background runner started')
 
     def stop(self):
         self._running = False
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
-        self._log('INFO', 'Background runner stopped')
+        self._log('Background runner stopped')
 
     @property
     def is_running(self) -> bool:
@@ -72,6 +70,7 @@ class DesktopAppManager:
         return self._log_buffer[-max_lines:]
 
     def _check_relays_health(self) -> None:
+        from pynostr.filters import FiltersList, Filters
         relays = self._store.get_enabled_relays()
         for r in relays:
             start = time.time()
@@ -79,26 +78,20 @@ class DesktopAppManager:
                 from pynostr.relay_manager import RelayManager
                 rm = RelayManager(timeout=5)
                 rm.add_relay(r)
-                rm.open_connections()
-                # open_connections is non-blocking in pynostr,
-                # so poll message_pool briefly to confirm the connection
-                mp = getattr(rm, "message_pool", None)
-                connected = False
-                deadline = time.time() + 4
-                while time.time() < deadline:
-                    if mp is not None and hasattr(mp, "has_events") and mp.has_events():
-                        connected = True
-                        break
-                    time.sleep(0.1)
+                sub_id = f"health-{int(time.time() * 1000)}"
+                filters = FiltersList([Filters(limit=0)])
+                rm.add_subscription_on_all_relays(sub_id, filters)
+                rm.run_sync()
                 latency = int((time.time() - start) * 1000)
+                mp = rm.message_pool
+                if mp.has_eose_notices() or mp.has_events() or mp.has_notices():
+                    self._store.update_relay_latency(r, latency)
+                else:
+                    self._store.mark_relay_used(r, "No response from relay")
                 try:
                     rm.close_connections()
                 except Exception:
                     pass
-                if connected:
-                    self._store.update_relay_latency(r, latency)
-                else:
-                    self._store.mark_relay_used(r, "Connection timeout")
             except Exception as e:
                 self._store.mark_relay_used(r, str(e))
 
@@ -108,19 +101,18 @@ class DesktopAppManager:
                 self._check_relays_health()
 
                 if self._runner:
-                    self._runner.ingest_sources_once()
-                    self._runner.publish_one_pending()
+                    self._runner.ingest_sources_once(api_limit=50, lookback_days=30)
+                    nsec = get_stored_nsec(self._store.db_path)
+                    relays = self._store.get_enabled_relays()
+                    if nsec and relays:
+                        self._runner.publish_one_pending(nsec=nsec, relays=relays)
 
-                metrics = self._store.get_metrics()
-                if isinstance(metrics, dict):
-                    metrics_dict = metrics
-                else:
-                    metrics_dict = {
-                        'pending': getattr(metrics, 'pending', 0),
-                        'posted_today': getattr(metrics, 'posted_today', 0),
-                        'failed': getattr(metrics, 'failed', 0),
-                        'active_sources': getattr(metrics, 'active_sources', 0),
-                    }
+                metrics_dict = {
+                    'pending': self._store.count_pending(),
+                    'posted_today': self._store.count_posted(),
+                    'failed': self._store.count_failed(),
+                    'active_sources': self._store.count_sources(),
+                }
 
                 queue_count = self._store.count_pending()
                 self._schedule_update({
@@ -128,10 +120,10 @@ class DesktopAppManager:
                     'queue_count': queue_count,
                 })
             except Exception as e:
-                self._log('ERROR', f'Runner error: {e}')
+                self._log(f'Runner error: {e}', level='ERROR')
                 traceback.print_exc()
 
-            for _ in range(60):
+            for _ in range(300):
                 if self._stop_event.is_set():
                     break
                 time.sleep(1)
@@ -145,12 +137,12 @@ class DesktopAppManager:
         return False
 
     def _on_publish(self, video_title: str):
-        self._log('INFO', f'Published "{video_title}"')
+        self._log(f'Published "{video_title}"')
 
     def _on_error(self, message: str):
-        self._log('ERROR', message)
+        self._log(message, level='ERROR')
 
-    def _log(self, level: str, message: str):
+    def _log(self, message: str, level: str = 'INFO'):
         ts = datetime.now().strftime('%H:%M:%S')
         entry = f'{ts}  {level:8}  {message}'
         self._log_buffer.append(entry)

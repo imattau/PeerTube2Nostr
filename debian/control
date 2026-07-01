@@ -1,0 +1,38 @@
+Source: peertube2nostr
+Section: net
+Priority: optional
+Maintainer: Matt Thomson <peertube2nostr@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-virtualenv,
+               python3-all,
+               python3-setuptools,
+               python3-pip,
+               python3-venv,
+               dh-python
+Standards-Version: 4.6.2
+Homepage: https://github.com/mattthomson/PeerTube2Nostr
+Vcs-Browser: https://github.com/mattthomson/PeerTube2Nostr
+Vcs-Git: https://github.com/mattthomson/PeerTube2Nostr.git
+
+Package: peertube2nostr-desktop
+Architecture: all
+Depends: ${misc:Depends},
+         python3 (>= 3.10),
+         gir1.2-gtk-3.0,
+         python3-gi,
+         python3-gi-cairo,
+         python3-keyring,
+         python3-requests,
+         python3-feedparser,
+Recommends: gnome-themes-standard
+Description: PeerTube to Nostr publisher - GNOME desktop application
+ PeerTube2Nostr publishes PeerTube channel videos to Nostr relays with
+ proper attribution. This package provides the native GNOME 3 desktop
+ interface built with GTK 3.
+ .
+ Features:
+  - Channel video ingestion via PeerTube API with RSS fallback
+  - Automatic Nostr note publishing with embedded MP4/HLS links
+  - SQLite-backed deduplication and relay management
+  - Secure nsec storage via OS keyring
+  - Native GNOME 3 UI with Adwaita theming

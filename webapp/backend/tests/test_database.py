@@ -16,6 +16,22 @@ def test_relay_management(store):
     store.remove_relay(rid)
     assert len(store.list_relays()) == 0
 
+def test_relay_latency_preserved_on_successful_use(store):
+    rid = store.add_relay("wss://latency-test.relay")
+    assert rid > 0
+
+    store.update_relay_latency("wss://latency-test.relay", 150)
+    relays = store.list_relays()
+    assert relays[0]['latency_ms'] == 150
+
+    store.mark_relay_used("wss://latency-test.relay", None)
+    relays = store.list_relays()
+    assert relays[0]['latency_ms'] == 150, "latency should be preserved after successful use"
+
+    store.mark_relay_used("wss://latency-test.relay", "connection lost")
+    relays = store.list_relays()
+    assert relays[0]['latency_ms'] is None, "latency should be cleared on error"
+
 def test_source_management(store):
     sid = store.add_rss_source("https://example.com/feed.xml")
     assert sid > 0
