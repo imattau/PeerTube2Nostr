@@ -1,4 +1,4 @@
-peertube2nostr (0.1.0) unstable; urgency=low
+peertube2nostr (0.1.1) unstable; urgency=low
 
   * Add system tray icon for minimize-to-background on GNOME
 
