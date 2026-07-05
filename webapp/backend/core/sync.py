@@ -2,12 +2,14 @@ import json
 import time
 from typing import Optional
 
+from pynostr.event import Event
 from pynostr.filters import Filters, FiltersList
 from pynostr.key import PrivateKey
 from pynostr.relay_manager import RelayManager
 
 from core.database import Store
 from core.utils import UrlNormaliser
+from core.sync_state import unwrap_gift_wrap, unseal
 
 
 def import_nip65_relays(
@@ -18,8 +20,8 @@ def import_nip65_relays(
     log_fn=print,
 ) -> int:
     priv = PrivateKey.from_nsec(nsec)
-    pub = priv.public_key
-    pub_hex = pub.hex()
+    pub_hex = priv.public_key.hex()
+    priv_hex = priv.hex()
 
     rm = RelayManager(timeout=8)
     for r in bootstrap_relays:
@@ -28,7 +30,11 @@ def import_nip65_relays(
         except Exception:
             pass
 
-    filters = FiltersList([Filters(authors=[pub_hex], kinds=[0, 10002])])
+    # Query both plain kind 10002 and encrypted gift wraps (kind 1059)
+    filters = FiltersList([
+        Filters(authors=[pub_hex], kinds=[0, 10002]),
+        Filters(kinds=[1059], pubkey_refs=[pub_hex], limit=10),
+    ])
     try:
         rm.add_subscription_on_all_relays("pt2n-sync", filters)
     except Exception:
@@ -44,9 +50,20 @@ def import_nip65_relays(
             ev = _extract_event_from_msg(msg)
             if ev is None:
                 continue
-            ev_kind = _event_get(ev, "kind")
-            if int(ev_kind or 0) == 10002:
+            ev_kind = int(_event_get(ev, "kind") or 0)
+            if ev_kind == 10002:
                 relays_ev = ev
+            elif ev_kind == 1059:
+                # Try to unwrap gift wrap → find a kind 10002 rumor inside
+                try:
+                    ev_obj = _to_event(ev)
+                    seal = unwrap_gift_wrap(ev_obj, priv_hex)
+                    if seal is not None and int(getattr(seal, "kind", 0) or 0) == 13:
+                        rumor = unseal(seal, priv_hex)
+                        if rumor is not None and int(getattr(rumor, "kind", 0) or 0) == 10002:
+                            relays_ev = rumor
+                except Exception:
+                    pass
 
     try:
         rm.close_connections()
@@ -76,6 +93,17 @@ def import_nip65_relays(
         log_fn(f"Imported {imported} NIP-65 relays")
 
     return imported
+
+
+def _to_event(raw) -> Optional[Event]:
+    if isinstance(raw, Event):
+        return raw
+    if isinstance(raw, dict):
+        return Event.from_dict(raw)
+    d = getattr(raw, "to_dict", None)
+    if d:
+        return Event.from_dict(d())
+    return None
 
 
 def _event_get(ev, key: str):
