@@ -1,10 +1,10 @@
 Name:           peertube2nostr
-Version:        0.1.4
+Version:        0.1.5
 Release:        1%{?dist}
 Summary:        PeerTube to Nostr publisher - GNOME desktop application
 
 License:        LGPL-2.1+
-URL:            https://github.com/mattthomson/PeerTube2Nostr
+URL:            https://github.com/imattau/PeerTube2Nostr
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 
 BuildArch:      noarch
