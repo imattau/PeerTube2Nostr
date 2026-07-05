@@ -17,6 +17,7 @@ const passkeySupported = ref(false)
 const storedPasskeyPubkey = ref('')
 const showPasskeyImport = ref(false)
 const passkeyImportNsec = ref('')
+const syncing = ref(false)
 
 async function load() {
   loading.value = true
@@ -55,6 +56,18 @@ async function clearNsec() {
   await api.deleteNsec()
   statusMsg.value = 'All data cleared — returning to setup'
   setTimeout(() => window.location.reload(), 1500)
+}
+
+async function syncProfile() {
+  syncing.value = true
+  statusMsg.value = ''
+  try {
+    const res = await api.importNip65()
+    statusMsg.value = `Imported ${res.imported} relay(s) from NIP-65 profile`
+  } catch (e: any) {
+    statusMsg.value = `Sync failed: ${e.message}`
+  }
+  syncing.value = false
 }
 
 async function setupPasskey() {
@@ -214,7 +227,7 @@ function npub(hex: string): string {
           <div class="action-subtitle">Fetch metadata and NIP-65 relay list from relays</div>
         </div>
         <div class="action-right">
-          <button class="button-default">Sync</button>
+          <button class="button-default" :disabled="syncing" @click="syncProfile">{{ syncing ? 'Syncing...' : 'Sync' }}</button>
         </div>
       </div>
 
