@@ -893,3 +893,13 @@ class Store:
         )
         self.conn.commit()
         return cur.rowcount
+
+    def reset_all(self) -> None:
+        self.conn.execute("DELETE FROM videos")
+        self.conn.execute("DELETE FROM sources")
+        self.conn.execute("DELETE FROM relays")
+        self.conn.execute("DELETE FROM settings")
+        self._ensure_setting("min_publish_interval_seconds", "1200")
+        self._ensure_setting("max_posts_per_hour", "3")
+        self._ensure_setting("max_posts_per_day_per_source", "1")
+        self.conn.commit()

@@ -51,9 +51,9 @@ async function setNsec() {
 }
 
 async function clearNsec() {
-  if (!confirm('Remove stored NSEC?')) return
+  if (!confirm('Remove NSEC and clear ALL data (sources, relays, queue, settings)?')) return
   await api.deleteNsec()
-  statusMsg.value = 'NSEC removed — returning to setup'
+  statusMsg.value = 'All data cleared — returning to setup'
   setTimeout(() => window.location.reload(), 1500)
 }
 
