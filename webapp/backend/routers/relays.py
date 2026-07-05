@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 
 from core.database import Store, get_stored_nsec
 from core.utils import UrlNormaliser
@@ -29,7 +29,7 @@ def list_relays(store: Store = Depends(get_store)):
 
 
 @router.post("")
-def add_relay(relay_url: str, store: Store = Depends(get_store)):
+def add_relay(relay_url: str = Body(..., embed=True), store: Store = Depends(get_store)):
     try:
         rid = store.add_relay(relay_url)
         return {"id": rid, "relay_url": relay_url}

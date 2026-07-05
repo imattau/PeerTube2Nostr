@@ -100,7 +100,7 @@ export const api = {
   ),
 
   addRelay: (url: string) => pick(
-    () => httpCall<{ id: number }>('POST', `/relays?relay_url=${encodeURIComponent(url)}`),
+    () => request<{ id: number }>('/relays', { method: 'POST', body: JSON.stringify({ relay_url: url }) }),
     () => tauri<{ id: number }>('add_relay', { relayUrl: url }),
   )(),
 
@@ -185,5 +185,19 @@ export const api = {
   markSetupComplete: pick(
     () => httpCall<{ ok: boolean }>('POST', '/setup/complete'),
     () => Promise.resolve({ ok: true }),
+  ),
+
+  // Sync
+  syncState: pick(
+    () => httpCall<{ event_id: string }>('POST', '/sync'),
+    () => Promise.resolve({ event_id: '' }),
+  ),
+  syncStatus: pick(
+    () => httpCall<{ available: boolean; pubkey?: string; relay_count?: number }>('GET', '/sync/status'),
+    () => Promise.resolve({ available: false }),
+  ),
+  syncRestore: pick(
+    () => httpCall<{ found: boolean; version?: number; ts?: number; video_count?: number; source_count?: number }>('GET', '/sync/restore'),
+    () => Promise.resolve({ found: false }),
   ),
 }

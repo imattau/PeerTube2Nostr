@@ -12,7 +12,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from auth import verify_api_key, get_api_key
-from routers import sources, relays, queue, metrics, settings, setup
+from routers import sources, relays, queue, metrics, settings, setup, sync
 from dependencies import get_store, get_db_path
 from ws import ws_router, log_manager
 
@@ -67,6 +67,7 @@ app.include_router(queue.router)
 app.include_router(metrics.router)
 app.include_router(settings.router)
 app.include_router(setup.router)
+app.include_router(sync.router)
 app.include_router(ws_router)
 
 
