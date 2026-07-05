@@ -1,11 +1,25 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 
 from core.database import Store
 from core.runner import PendingSelector
+from core.sync_state import StateSyncer
+from core.database import get_stored_nsec
 from auth import verify_api_key
-from dependencies import get_store
+from dependencies import get_store, get_db_path
 
 router = APIRouter(prefix="/api/queue", tags=["queue"], dependencies=[Depends(verify_api_key)])
+
+
+def _sync_state(store: Store, db_path: str) -> None:
+    from routers.sync import make_syncer
+    syncer = make_syncer(store, db_path)
+    if syncer:
+        try:
+            syncer.sync_all()
+        except Exception:
+            pass
 
 
 @router.get("")
@@ -50,6 +64,8 @@ def queue_metrics(store: Store = Depends(get_store)):
 def retry_failed(
     older_than_seconds: int = 0,
     store: Store = Depends(get_store),
+    db_path: str = Depends(get_db_path),
 ):
     count = store.retry_failed(older_than_seconds)
+    _sync_state(store, db_path)
     return {"requeued": count}

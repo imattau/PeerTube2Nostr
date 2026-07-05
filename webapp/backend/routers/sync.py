@@ -10,7 +10,7 @@ from dependencies import get_store, get_db_path
 router = APIRouter(prefix="/api/sync", tags=["sync"], dependencies=[Depends(verify_api_key)])
 
 
-def _make_syncer(store: Store, db_path: str) -> Optional[StateSyncer]:
+def make_syncer(store: Store, db_path: str) -> Optional[StateSyncer]:
     nsec = get_stored_nsec(db_path)
     if not nsec:
         return None
@@ -18,6 +18,10 @@ def _make_syncer(store: Store, db_path: str) -> Optional[StateSyncer]:
     if not relays:
         return None
     return StateSyncer(store, nsec, relays)
+
+
+def _make_syncer(store, db_path):
+    return make_syncer(store, db_path)
 
 
 @router.post("")

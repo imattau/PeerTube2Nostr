@@ -8,10 +8,21 @@ from core.nostr import NostrPublisher
 from core.runner import Runner
 from core.utils import UrlNormaliser
 from core.database import get_stored_nsec
+from core.sync_state import StateSyncer
 from auth import verify_api_key
-from dependencies import get_store, get_normaliser
+from dependencies import get_store, get_normaliser, get_db_path
 
 router = APIRouter(prefix="/api/sources", tags=["sources"], dependencies=[Depends(verify_api_key)])
+
+
+def _sync_sources(store: Store, db_path: str) -> None:
+    from routers.sync import make_syncer
+    syncer = make_syncer(store, db_path)
+    if syncer:
+        try:
+            syncer.sync_all()
+        except Exception:
+            pass
 
 
 @router.get("")
@@ -43,10 +54,11 @@ def get_source(source_id: int, store: Store = Depends(get_store)):
 
 
 @router.post("")
-def add_source(url: str, store: Store = Depends(get_store), n: UrlNormaliser = Depends(get_normaliser)):
+def add_source(url: str, store: Store = Depends(get_store), n: UrlNormaliser = Depends(get_normaliser), db_path: str = Depends(get_db_path)):
     try:
         n.extract_channel_ref(url)
         sid = store.add_channel_source(url)
+        _sync_sources(store, db_path)
         return {"id": sid, "type": "channel"}
     except Exception:
         pass
@@ -93,22 +105,25 @@ def clear_rss(source_id: int, store: Store = Depends(get_store)):
 
 
 @router.post("/{source_id}/enable")
-def enable_source(source_id: int, store: Store = Depends(get_store)):
+def enable_source(source_id: int, store: Store = Depends(get_store), db_path: str = Depends(get_db_path)):
     store.set_source_enabled(source_id, True)
+    _sync_sources(store, db_path)
     return {"ok": True}
 
 
 @router.post("/{source_id}/disable")
-def disable_source(source_id: int, store: Store = Depends(get_store)):
+def disable_source(source_id: int, store: Store = Depends(get_store), db_path: str = Depends(get_db_path)):
     store.set_source_enabled(source_id, False)
+    _sync_sources(store, db_path)
     return {"ok": True}
 
 
 @router.delete("/{source_id}")
-def remove_source(source_id: int, store: Store = Depends(get_store)):
+def remove_source(source_id: int, store: Store = Depends(get_store), db_path: str = Depends(get_db_path)):
     c = store.remove_source(source_id)
     if not c:
         raise HTTPException(status_code=404, detail="Source not found")
+    _sync_sources(store, db_path)
     return {"ok": True}
 
 

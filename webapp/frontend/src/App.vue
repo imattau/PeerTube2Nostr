@@ -32,6 +32,13 @@ onMounted(async () => {
     }
   } catch { }
   metrics.startPolling(10000)
+  // Try to restore state from encrypted Nostr sync on first load
+  try {
+    const restored: any = await api.syncRestore()
+    if (restored.found) {
+      console.log(`Sync state: ${restored.video_count ?? 0} videos, ${restored.source_count ?? 0} sources`)
+    }
+  } catch { }
 })
 
 onUnmounted(() => {

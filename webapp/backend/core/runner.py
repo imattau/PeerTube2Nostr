@@ -6,6 +6,7 @@ from typing import Optional, List
 from core.database import Store, get_stored_nsec
 from core.peertube import PeerTubeClient, IngestPipeline
 from core.nostr import NostrPublisher
+from core.sync_state import StateSyncer
 from core.utils import UrlNormaliser, DEFAULT_RELAYS, _sleep_interruptible
 
 _RUNTIME_STATUS = ""
@@ -107,6 +108,17 @@ class Runner:
         self.dry_run = dry_run
         self.ingest = IngestPipeline(store, pt, n, self._log)
 
+    def _sync_state(self) -> None:
+        try:
+            nsec = get_stored_nsec(self.store.db_path)
+            if nsec:
+                relays = self.store.get_enabled_relays()
+                if relays:
+                    syncer = StateSyncer(self.store, nsec, relays)
+                    syncer.sync_all()
+        except Exception:
+            pass
+
     def _log(self, msg: str) -> None:
         if self.log_fn:
             self.log_fn(msg)
@@ -181,6 +193,8 @@ class Runner:
                 self.store.mark_source_polled(sid, None)
                 if inserted:
                     self._log(f"[source {sid}] API new items: {inserted}")
+                if inserted:
+                    self._sync_state()
                 if skipped:
                     self._log(f"[source {sid}] API skipped old items: {skipped}")
                 return
@@ -266,7 +280,8 @@ class Runner:
             self.store.mark_posted(pending["id"], eid)
             for r in relays:
                 self.store.mark_relay_used(r, None)
-            self._log(f"Published {eid} | {pending.get('title') or pending.get('watch_url')}")
+                self._log(f"Published {eid} | {pending.get('title') or pending.get('watch_url')}")
+                self._sync_state()
         except Exception as ex:
             self.store.mark_failed(pending["id"], str(ex))
             for r in relays:
