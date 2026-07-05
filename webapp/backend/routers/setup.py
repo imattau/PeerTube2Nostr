@@ -10,12 +10,12 @@ router = APIRouter(prefix="/api/setup", tags=["setup"], dependencies=[Depends(ve
 @router.get("/status")
 def setup_status(store: Store = Depends(get_store), db_path: str = Depends(get_db_path)):
     complete = store.get_setting("setup_complete") in ("1", "true", True)
-    # Setup is only truly complete when nsec is configured, regardless of
-    # any stale setup_complete flag left by old auto-completion code.
     if complete:
         has_nsec = bool(get_stored_nsec(db_path))
         if not has_nsec:
-            complete = False
+            signing_method = store.get_setting("signing_method")
+            if signing_method not in ("nip07", "nip46"):
+                complete = False
     relays = store.count_relays()
     sources = store.count_sources()
     return {

@@ -32,6 +32,7 @@ onMounted(async () => {
     <div v-if="metrics" class="card mb-16">
       <div class="heading-4 mb-8">System</div>
       <div class="body">Status: {{ metrics.status }}</div>
+      <div class="body">Signing method: {{ metrics.signing_method || 'nsec' }}</div>
       <div class="body">NSEC configured: {{ metrics.has_nsec ? 'Yes' : 'No' }}</div>
       <div class="body">Next post: {{ metrics.next_post }}</div>
     </div>

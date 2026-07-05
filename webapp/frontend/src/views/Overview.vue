@@ -66,7 +66,8 @@ onMounted(async () => {
     <div class="body mt-16" v-if="metrics">
       <div>Last poll: {{ metrics.poll_age }}</div>
       <div>Last post: {{ metrics.post_age }}</div>
-      <div>Next post: {{ metrics.next_post }}</div>
+      <div>Next post: {{ metrics.next_post === 'nsec missing' && metrics.signing_method && metrics.signing_method !== 'nsec' ? 'pending (frontend signer)' : metrics.next_post }}</div>
+      <div v-if="metrics.signing_method && metrics.signing_method !== 'nsec'">Signer: {{ metrics.signing_method }}</div>
     </div>
   </div>
 </template>

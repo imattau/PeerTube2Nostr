@@ -19,6 +19,7 @@ class DashboardMetrics:
     max_per_hour: int
     max_per_day_per_source: int
     has_nsec: bool
+    signing_method: str
     status: str
     now_ts: int
     next_post: str
@@ -28,6 +29,7 @@ class DashboardMetrics:
         now_ts = int(time.time())
         min_interval, max_per_hour = store.get_publish_limits()
         max_per_day_per_source = store.get_daily_source_limit()
+        signing_method = store.get_setting("signing_method") or "nsec"
         return cls(
             relays=store.count_relays(),
             sources=store.count_sources(),
@@ -40,6 +42,7 @@ class DashboardMetrics:
             max_per_hour=max_per_hour,
             max_per_day_per_source=max_per_day_per_source,
             has_nsec=bool(get_stored_nsec(db_path)),
+            signing_method=signing_method,
             status=_get_runtime_status() or "idle",
             now_ts=now_ts,
             next_post=_estimate_next_post(store, db_path),
@@ -114,6 +117,9 @@ def _estimate_next_post(store: Store, db_path: str) -> str:
     if store.count_pending() == 0:
         return "none"
     if not get_stored_nsec(db_path):
+        signing_method = store.get_setting("signing_method")
+        if signing_method in ("nip07", "nip46"):
+            return "pending (frontend signer)"
         return "nsec missing"
     now_ts = int(time.time())
     selector = PendingSelector(store)

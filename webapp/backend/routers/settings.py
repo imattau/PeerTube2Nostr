@@ -16,11 +16,13 @@ def get_settings(
 ):
     min_interval, max_per_hour = store.get_publish_limits()
     max_per_day_per_source = store.get_daily_source_limit()
+    signing_method = store.get_setting("signing_method") or "nsec"
     return {
         "min_publish_interval_seconds": min_interval,
         "max_posts_per_hour": max_per_hour,
         "max_posts_per_day_per_source": max_per_day_per_source,
         "has_nsec": bool(get_stored_nsec(db_path)),
+        "signing_method": signing_method,
     }
 
 
@@ -29,6 +31,7 @@ def update_settings(
     min_publish_interval_seconds: Optional[int] = None,
     max_posts_per_hour: Optional[int] = None,
     max_posts_per_day_per_source: Optional[int] = None,
+    signing_method: Optional[str] = None,
     store: Store = Depends(get_store),
 ):
     if min_publish_interval_seconds is not None:
@@ -37,12 +40,18 @@ def update_settings(
         store.set_setting("max_posts_per_hour", str(max_posts_per_hour))
     if max_posts_per_day_per_source is not None:
         store.set_setting("max_posts_per_day_per_source", str(max_posts_per_day_per_source))
+    if signing_method is not None:
+        if signing_method not in ("nsec", "nip07", "nip46"):
+            raise HTTPException(status_code=400, detail=f"Invalid signing method: {signing_method}")
+        store.set_setting("signing_method", signing_method)
     min_interval, max_per_hour = store.get_publish_limits()
     max_per_day = store.get_daily_source_limit()
+    signing = store.get_setting("signing_method") or "nsec"
     return {
         "min_publish_interval_seconds": min_interval,
         "max_posts_per_hour": max_per_hour,
         "max_posts_per_day_per_source": max_per_day,
+        "signing_method": signing,
     }
 
 

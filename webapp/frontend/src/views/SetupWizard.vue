@@ -97,13 +97,14 @@ function useNsecDirect() {
   } catch {}
 }
 
-function useNip07() {
+async function useNip07() {
   identityMethod.value = 'nip07'
   showingNsecInput.value = false
   showingPasskeyImport.value = false
   if (nip07Pubkey.value) {
     storeIdentityNpub(nip07Pubkey.value)
   }
+  try { await api.updateSettings({ signing_method: 'nip07' }) } catch {}
 }
 
 async function useNip46() {
@@ -115,6 +116,7 @@ async function useNip46() {
     identityMethod.value = 'nip46'
     showingBunkerInput.value = false
     storeIdentityNpub(pubkey)
+    try { await api.updateSettings({ signing_method: 'nip46' }) } catch {}
   } catch (e: any) {
     nip46Error.value = e.message
   }

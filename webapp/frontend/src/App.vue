@@ -119,6 +119,7 @@ onMounted(async () => {
       const pubkey = await win.nostr.getPublicKey()
       if (pubkey) storeIdentityNpub(pubkey)
     } catch {}
+    try { await api.updateSettings({ signing_method: 'nip07' }) } catch {}
     nip07Interval = setInterval(tryPublishWithNip07, 30000)
     tryPublishWithNip07()
   }
@@ -127,6 +128,7 @@ onMounted(async () => {
   const nip46Status = nip46.getStatus()
   if (nip46Status.connected && nip46Status.pubkey) {
     storeIdentityNpub(nip46Status.pubkey)
+    try { await api.updateSettings({ signing_method: 'nip46' }) } catch {}
     nip46Interval = setInterval(tryPublishWithNip46, 30000)
     tryPublishWithNip46()
   }

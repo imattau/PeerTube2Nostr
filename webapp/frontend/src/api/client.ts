@@ -43,6 +43,7 @@ export interface Video {
 export interface Metrics {
   relays: number; sources: number; pending: number
   posted: number; failed: number; has_nsec: boolean
+  signing_method?: string
   status: string; next_post: string; poll_age: string
   post_age: string; last_poll_ts: number | null
   last_posted_ts: number | null; min_interval: number
@@ -52,6 +53,7 @@ export interface Metrics {
 export interface Settings {
   min_publish_interval_seconds: number; max_posts_per_hour: number
   max_posts_per_day_per_source: number; has_nsec: boolean
+  signing_method: string
 }
 
 async function tauri<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -184,6 +186,7 @@ export const api = {
     if (data.min_publish_interval_seconds !== undefined) params.set('min_publish_interval_seconds', String(data.min_publish_interval_seconds))
     if (data.max_posts_per_hour !== undefined) params.set('max_posts_per_hour', String(data.max_posts_per_hour))
     if (data.max_posts_per_day_per_source !== undefined) params.set('max_posts_per_day_per_source', String(data.max_posts_per_day_per_source))
+    if (data.signing_method !== undefined) params.set('signing_method', data.signing_method)
     return pick(
       () => httpCall<Settings>('PUT', `/settings?${params}`),
       () => tauri<Settings>('update_settings', {

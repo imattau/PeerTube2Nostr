@@ -141,6 +141,7 @@ async function connectBunker() {
     statusMsg.value = 'Connected to remote signer'
     showBunker.value = false
     syncNip46Status()
+    try { await api.updateSettings({ signing_method: 'nip46' }) } catch {}
   } catch (e: any) {
     nip46Error.value = e.message
   }
@@ -150,6 +151,7 @@ async function disconnectBunker() {
   await nip46.disconnect()
   syncNip46Status()
   statusMsg.value = 'Disconnected from remote signer'
+  try { await api.updateSettings({ signing_method: 'nsec' }) } catch {}
 }
 
 onMounted(async () => {
