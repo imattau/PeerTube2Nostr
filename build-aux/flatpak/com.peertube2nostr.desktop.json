@@ -29,7 +29,7 @@
       "name": "peertube2nostr",
       "buildsystem": "simple",
       "build-commands": [
-        "mkdir -p /run/build/peertube2nostr/npm-cache && npm cache clean --force --prefix webapp/frontend 2>/dev/null; npm ci --no-audit --no-fund --prefer-offline --maxsockets 1 --prefix webapp/frontend",
+        "mkdir -p /run/build/peertube2nostr/npm-cache && npm install --no-audit --no-fund --no-package-lock --maxsockets 1 --prefix webapp/frontend",
         "npm run build --prefix webapp/frontend",
         "cargo build --manifest-path src-tauri/Cargo.toml --release",
         "install -Dm755 src-tauri/target/release/peertube2nostr /app/bin/peertube2nostr",
