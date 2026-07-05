@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n fe,be -c cyan,green \"cd webapp/frontend && npm run dev\" \"python3 -m uvicorn webapp.backend.main:app --host 127.0.0.1 --port 8000 --reload\"",
+    "build": "npm run build --prefix webapp/frontend",
+    "preview": "npm run preview --prefix webapp/frontend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

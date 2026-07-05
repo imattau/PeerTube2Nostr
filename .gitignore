@@ -13,6 +13,7 @@ figma_exports/
 src-tauri/target/
 
 # Frontend
+node_modules/
 webapp/frontend/node_modules/
 webapp/frontend/dist/
 
