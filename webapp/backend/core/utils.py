@@ -9,7 +9,13 @@ from typing import Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 
-DEFAULT_RELAYS = ["wss://relay.damus.io", "wss://nos.lol"]
+DEFAULT_RELAYS = [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.nostr.band",
+    "wss://relay.snort.social",
+    "wss://relay.primal.net",
+]
 KEYRING_SERVICE = "peertube_nostr"
 
 

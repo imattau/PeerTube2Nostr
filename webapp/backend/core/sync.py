@@ -30,9 +30,11 @@ def import_nip65_relays(
         except Exception:
             pass
 
-    # Query both plain kind 10002 and encrypted gift wraps (kind 1059)
+    # Query common relay list kinds: 10002 (NIP-65), 10000, 3 (deprecated),
+    # and encrypted gift wraps (kind 1059)
+    RELAY_KINDS = [3, 10000, 10002]
     filters = FiltersList([
-        Filters(authors=[pub_hex], kinds=[0, 10002]),
+        Filters(authors=[pub_hex], kinds=[0] + RELAY_KINDS),
         Filters(kinds=[1059], pubkey_refs=[pub_hex], limit=10),
     ])
     try:
@@ -51,17 +53,30 @@ def import_nip65_relays(
             if ev is None:
                 continue
             ev_kind = int(_event_get(ev, "kind") or 0)
-            if ev_kind == 10002:
-                relays_ev = ev
+            if ev_kind in (3, 10000, 10002):
+                tags = _event_get(ev, "tags") or []
+                # Only accept events that have 'r' tags (relay annotations)
+                has_r_tags = any(
+                    isinstance(t, (list, tuple)) and len(t) >= 2 and t[0] == "r"
+                    for t in tags
+                )
+                if has_r_tags:
+                    relays_ev = ev
             elif ev_kind == 1059:
-                # Try to unwrap gift wrap → find a kind 10002 rumor inside
+                # Try to unwrap gift wrap → find a relay-list rumor inside
                 try:
                     ev_obj = _to_event(ev)
                     seal = unwrap_gift_wrap(ev_obj, priv_hex)
                     if seal is not None and int(getattr(seal, "kind", 0) or 0) == 13:
                         rumor = unseal(seal, priv_hex)
-                        if rumor is not None and int(getattr(rumor, "kind", 0) or 0) == 10002:
-                            relays_ev = rumor
+                        if rumor is not None and int(getattr(rumor, "kind", 0) or 0) in (3, 10000, 10002):
+                            tags = getattr(rumor, "tags", []) or []
+                            has_r_tags = any(
+                                isinstance(t, (list, tuple)) and len(t) >= 2 and t[0] == "r"
+                                for t in tags
+                            )
+                            if has_r_tags:
+                                relays_ev = rumor
                 except Exception:
                     pass
 

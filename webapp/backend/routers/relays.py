@@ -113,16 +113,18 @@ def import_nip65(
     nsec = get_stored_nsec(store.db_path)
     if not nsec:
         raise HTTPException(status_code=400, detail="No NSEC configured. Set one in settings first.")
-    if not bootstrap_relays:
-        bootstrap_relays = list(store.get_enabled_relays())
-    # Always include well-known relays to find the list even if it's not
-    # on the user's configured relays.
+    # Dedup by normalized URL so wss://relay.damus.io and wss://relay.damus.io/
+    # are treated as the same relay.
     seen = set()
     merged: list[str] = []
-    for r in list(bootstrap_relays) + DEFAULT_RELAYS:
-        if r not in seen:
-            seen.add(r)
-            merged.append(r)
+    for raw in list(bootstrap_relays or store.get_enabled_relays()) + DEFAULT_RELAYS:
+        try:
+            norm = n.normalise_relay_url(raw)
+        except Exception:
+            norm = raw
+        if norm not in seen:
+            seen.add(norm)
+            merged.append(norm)
     if not merged:
         raise HTTPException(status_code=400, detail="No bootstrap relays available. Add at least one relay first.")
     count = import_nip65_relays(nsec=nsec, store=store, n=n, bootstrap_relays=merged, log_fn=print)
