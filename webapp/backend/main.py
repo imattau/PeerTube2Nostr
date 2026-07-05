@@ -49,9 +49,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="PeerTube2Nostr API",
     description="REST API for PeerTube2Nostr publisher",
-    version="0.1.4",
+    version="0.1.6",
     lifespan=lifespan,
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -75,7 +76,7 @@ app.include_router(ws_router)
 def root():
     return {
         "name": "PeerTube2Nostr API",
-        "version": "0.1.4",
+        "version": "0.1.6",
         "docs": "/docs",
         "openapi": "/openapi.json",
     }
