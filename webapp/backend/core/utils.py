@@ -38,6 +38,9 @@ class UrlNormaliser:
         raw = (url or "").strip()
         if not raw:
             raise ValueError("URL is empty")
+        # Fix triple-slash URLs like wss:///host (common user typo)
+        if ":///" in raw:
+            raw = raw.replace(":///", "://")
 
         p = urlparse(raw)
         if not p.scheme or not p.netloc:
