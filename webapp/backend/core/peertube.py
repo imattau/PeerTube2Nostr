@@ -26,7 +26,7 @@ class PeerTubeClient:
             return None
 
     def list_channel_videos(self, api_base: str, channel: str, limit: int = 50) -> Optional[List[Dict[str, Any]]]:
-        base = self.n.normalise_http_url(api_base)
+        base = self.n.normalise_http_url(api_base).rstrip("/")
         url = f"{base}/api/v1/video-channels/{channel}/videos"
 
         params_variants = [
