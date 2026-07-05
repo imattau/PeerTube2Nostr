@@ -19,7 +19,9 @@
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin",
     "env": {
-      "CARGO_HOME": "/run/build/peertube2nostr/cargo"
+      "CARGO_HOME": "/run/build/peertube2nostr/cargo",
+      "NODE_OPTIONS": "--dns-result-order=ipv4first",
+      "npm_config_cache": "/run/build/peertube2nostr/npm-cache"
     }
   },
   "modules": [
@@ -27,7 +29,7 @@
       "name": "peertube2nostr",
       "buildsystem": "simple",
       "build-commands": [
-        "npm ci --prefix webapp/frontend",
+        "mkdir -p /run/build/peertube2nostr/npm-cache && npm cache clean --force --prefix webapp/frontend 2>/dev/null; npm ci --no-audit --no-fund --prefer-offline --maxsockets 1 --prefix webapp/frontend",
         "npm run build --prefix webapp/frontend",
         "cargo build --manifest-path src-tauri/Cargo.toml --release",
         "install -Dm755 src-tauri/target/release/peertube2nostr /app/bin/peertube2nostr",
