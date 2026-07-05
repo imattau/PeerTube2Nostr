@@ -67,7 +67,10 @@ def set_nsec(
 
 @router.delete("/nsec")
 def delete_nsec(
+    store: Store = Depends(get_store),
     db_path: str = Depends(get_db_path),
 ):
     removed = clear_stored_nsec(db_path)
+    if removed:
+        store.set_setting("setup_complete", "")
     return {"removed": removed}

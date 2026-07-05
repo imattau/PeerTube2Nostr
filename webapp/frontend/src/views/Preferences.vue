@@ -46,8 +46,8 @@ async function setNsec() {
 async function clearNsec() {
   if (!confirm('Remove stored NSEC?')) return
   await api.deleteNsec()
-  statusMsg.value = 'NSEC removed'
-  await load()
+  statusMsg.value = 'NSEC removed — returning to setup'
+  setTimeout(() => window.location.reload(), 1500)
 }
 
 onMounted(load)

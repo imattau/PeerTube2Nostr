@@ -22,5 +22,6 @@ pub fn set_nsec(nsec_key: String, db: State<'_, Database>) -> Result<NsecStatus,
 #[tauri::command]
 pub fn delete_nsec(db: State<'_, Database>) -> NsecStatus {
     nsec::delete_nsec(&db.db_path);
+    db.set_setting("setup_complete", "");
     NsecStatus { configured: false }
 }
