@@ -16,7 +16,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             bundle: deb appimage rpm
           - platform: macos-latest
-            target: universal-apple-darwin
+            target: aarch64-apple-darwin
             bundle: dmg
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
@@ -35,6 +35,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install macOS Rust targets (universal binary)
+        if: ${{ matrix.platform == 'macos-latest' }}
+        run: |
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
       - name: Install Linux dependencies
         if: ${{ matrix.platform == 'ubuntu-latest' }}
@@ -76,4 +81,10 @@ jobs:
           releaseBody: "See the assets to download and install this release."
           releaseDraft: true
           includeDebug: false
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
+          args: >-
+            --target ${{
+              matrix.platform == 'macos-latest'
+              && 'universal-apple-darwin'
+              || matrix.target
+            }}
+            --bundles ${{ matrix.bundle }}
