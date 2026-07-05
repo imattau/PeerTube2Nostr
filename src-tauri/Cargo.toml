@@ -1,6 +1,6 @@
 [package]
 name = "peertube2nostr"
-version = "0.1.4"
+version = "0.1.5"
 description = "Publish PeerTube channel videos to Nostr"
 authors = ["imattau"]
 license = "LGPL-2.1-only"
