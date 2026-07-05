@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api, type Settings } from '@/api/client'
+import { isPRFSupported, registerPasskeyIdentity, importPasskeyIdentityFromNsec, hasStoredPasskeyIdentity, getStoredPasskeyPubkey, exportPasskeyIdentityAsNsec } from 'nostr-passkey'
+import { nip19 } from 'nostr-tools'
 
 const settings = ref<Settings | null>(null)
 const loading = ref(true)
@@ -10,6 +12,11 @@ const nsecValue = ref('')
 const showBunker = ref(false)
 const bunkerUrl = ref('')
 const statusMsg = ref('')
+
+const passkeySupported = ref(false)
+const storedPasskeyPubkey = ref('')
+const showPasskeyImport = ref(false)
+const passkeyImportNsec = ref('')
 
 async function load() {
   loading.value = true
@@ -50,7 +57,42 @@ async function clearNsec() {
   setTimeout(() => window.location.reload(), 1500)
 }
 
-onMounted(load)
+async function setupPasskey() {
+  try {
+    await registerPasskeyIdentity({ rpName: 'PeerTube2Nostr' })
+    statusMsg.value = 'New passkey created'
+    storedPasskeyPubkey.value = getStoredPasskeyPubkey() || ''
+  } catch (e: any) { alert(e.message) }
+}
+
+async function importPasskey() {
+  if (!passkeyImportNsec.value) return
+  try {
+    await importPasskeyIdentityFromNsec(passkeyImportNsec.value, { rpName: 'PeerTube2Nostr' })
+    statusMsg.value = 'NSEC imported into passkey'
+    passkeyImportNsec.value = ''
+    showPasskeyImport.value = false
+    storedPasskeyPubkey.value = getStoredPasskeyPubkey() || ''
+  } catch (e: any) { alert(e.message) }
+}
+
+async function exportPasskeyNsec() {
+  try {
+    const nsec = await exportPasskeyIdentityAsNsec()
+    nsecValue.value = nsec
+    showNsec.value = true
+  } catch (e: any) { alert(e.message) }
+}
+
+onMounted(async () => {
+  await load()
+  passkeySupported.value = await isPRFSupported()
+  storedPasskeyPubkey.value = getStoredPasskeyPubkey() || ''
+})
+
+function npub(hex: string): string {
+  try { return nip19.npubEncode(hex) } catch { return hex }
+}
 </script>
 
 <template>
@@ -97,6 +139,31 @@ onMounted(load)
     <div class="card mb-16">
       <div class="heading-4 mb-8">Nostr identity</div>
 
+      <!-- Passkey -->
+      <div v-if="passkeySupported" class="action-row">
+        <div class="action-info">
+          <div class="action-title">Passkey (biometric / hardware key)</div>
+          <div class="action-subtitle" v-if="storedPasskeyPubkey">Ready: {{ npub(storedPasskeyPubkey) }}</div>
+          <div class="action-subtitle" v-else>Protected by FaceID, TouchID, Windows Hello, or YubiKey</div>
+        </div>
+        <div class="action-right flex items-center gap-8">
+          <span v-if="storedPasskeyPubkey" class="badge badge-success">Configured</span>
+          <button class="button-default" @click="setupPasskey">{{ storedPasskeyPubkey ? 'New key' : 'Create passkey' }}</button>
+          <button class="button-default" v-if="storedPasskeyPubkey" @click="showPasskeyImport = !showPasskeyImport">Import nsec</button>
+          <button class="button-default" v-if="storedPasskeyPubkey" @click="exportPasskeyNsec">Export nsec</button>
+        </div>
+      </div>
+
+      <div v-if="showPasskeyImport" class="p-16">
+        <div class="body mb-8">Import an existing nsec into your passkey:</div>
+        <input v-model="passkeyImportNsec" type="password" placeholder="nsec1..." class="w-full" @keyup.enter="importPasskey" />
+        <div class="flex gap-8 mt-8">
+          <button class="button-primary" :disabled="!passkeyImportNsec" @click="importPasskey">Import</button>
+          <button class="button-default" @click="showPasskeyImport = false; passkeyImportNsec = ''">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Direct NSEC (OS keyring) -->
       <div class="action-row">
         <div class="action-info">
           <div class="action-title">Local NSEC (OS keyring)</div>
@@ -119,6 +186,7 @@ onMounted(load)
         </div>
       </div>
 
+      <!-- NIP-46 Bunker -->
       <div class="action-row">
         <div class="action-info">
           <div class="action-title">NIP-46 Bunker (remote signer)</div>
