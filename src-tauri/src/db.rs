@@ -219,10 +219,37 @@ impl Database {
         Ok(id)
     }
 
+    pub fn add_relay_with_enabled(&self, url: &str, enabled: bool) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        let ts = now_ts();
+        let enabled_val: i64 = if enabled { 1 } else { 0 };
+        conn.execute(
+            "INSERT OR IGNORE INTO relays(relay_url, relay_url_norm, enabled, created_ts) VALUES (?1, ?1, ?2, ?3)",
+            params![url, enabled_val, ts],
+        ).map_err(|e| format!("Failed to add relay: {}", e))?;
+        let id = conn.last_insert_rowid();
+        if id == 0 {
+            let existing: i64 = conn.query_row(
+                "SELECT id FROM relays WHERE relay_url_norm=?1", params![url], |r| r.get(0),
+            ).unwrap_or(0);
+            if existing > 0 { return Ok(existing); }
+        }
+        Ok(id)
+    }
+
     pub fn remove_relay(&self, id: i64) -> bool {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM relays WHERE id=?1", params![id]).ok();
         true
+    }
+
+    pub fn get_enabled_relays(&self) -> Vec<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT relay_url FROM relays WHERE enabled=1 ORDER BY id ASC").unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
     }
 
     pub fn set_relay_enabled(&self, id: i64, enabled: bool) -> bool {

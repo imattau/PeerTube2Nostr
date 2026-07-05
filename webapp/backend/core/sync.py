@@ -29,49 +29,27 @@ def import_nip65_relays(
             pass
 
     filters = FiltersList([Filters(authors=[pub_hex], kinds=[0, 10002])])
-
     try:
-        if hasattr(rm, "add_subscription"):
-            sub_id = f"pt2n-sync-{int(time.time() * 1000)}"
-            sub = rm.add_subscription(sub_id)
-            if hasattr(sub, "add_filters"):
-                sub.add_filters(filters)
-            elif hasattr(sub, "set_filters"):
-                sub.set_filters(filters)
-        elif hasattr(rm, "add_subscription_on_all_relays"):
-            rm.add_subscription_on_all_relays("pt2n-sync", filters)
+        rm.add_subscription_on_all_relays("pt2n-sync", filters)
     except Exception:
         pass
 
-    try:
-        if hasattr(rm, "open_connections"):
-            rm.open_connections()
-    except Exception:
-        pass
+    rm.run_sync()
 
     relays_ev = None
-    start = time.time()
     mp = getattr(rm, "message_pool", None)
-    while time.time() - start < 8:
-        if mp is not None and hasattr(mp, "has_events") and hasattr(mp, "get_event"):
-            while mp.has_events():
-                msg = mp.get_event()
-                ev = _extract_event_from_msg(msg)
-                if ev is None:
-                    continue
-                kind = int(_event_get(ev, "kind") or 0)
-                if kind == 10002:
-                    relays_ev = ev
-        elif hasattr(rm, "run_sync"):
-            try:
-                rm.run_sync()
-            except Exception:
-                break
-        time.sleep(0.1)
+    if mp is not None:
+        while mp.has_events():
+            msg = mp.get_event()
+            ev = _extract_event_from_msg(msg)
+            if ev is None:
+                continue
+            ev_kind = _event_get(ev, "kind")
+            if int(ev_kind or 0) == 10002:
+                relays_ev = ev
 
     try:
-        if hasattr(rm, "close_connections"):
-            rm.close_connections()
+        rm.close_connections()
     except Exception:
         pass
 

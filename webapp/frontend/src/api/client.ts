@@ -121,7 +121,7 @@ export const api = {
 
   importNip65: () => pick(
     () => httpCall<{ imported: number }>('POST', '/relays/import-nip65'),
-    () => Promise.resolve({ imported: 0 }),
+    () => tauriInvoke<{ imported: number }>('import_nip65_relays'),
   )(),
 
   // Queue

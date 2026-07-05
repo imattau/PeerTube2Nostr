@@ -110,7 +110,7 @@ class Store:
     def __init__(self, db_path: str, n: UrlNormaliser) -> None:
         self.db_path = db_path
         self.n = n
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
         self.conn.execute("PRAGMA foreign_keys=ON;")

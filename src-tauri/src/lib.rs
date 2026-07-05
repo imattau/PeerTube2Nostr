@@ -73,6 +73,7 @@ pub fn run() {
             commands::nsec::get_nsec_status,
             commands::nsec::set_nsec,
             commands::nsec::delete_nsec,
+            commands::import_nip65::import_nip65_relays,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

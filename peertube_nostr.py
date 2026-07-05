@@ -1387,58 +1387,32 @@ def _fetch_latest_profile_events(relays: list[str], pubkey_hex: str, timeout_sec
             relay_errors += 1
 
     filters = FiltersList([Filters(authors=[pubkey_hex], kinds=[0, 10002])])
-
     try:
-        if hasattr(rm, "add_subscription"):
-            sub_id = f"pt2n-sync-{int(time.time() * 1000)}"
-            sub = rm.add_subscription(sub_id)
-            if hasattr(sub, "add_filters"):
-                sub.add_filters(filters)
-            elif hasattr(sub, "set_filters"):
-                sub.set_filters(filters)
-        elif hasattr(rm, "add_subscription_on_all_relays"):
-            rm.add_subscription_on_all_relays("pt2n-sync", filters)
+        rm.add_subscription_on_all_relays("pt2n-sync", filters)
     except Exception:
         relay_errors += 1
 
-    try:
-        if hasattr(rm, "open_connections"):
-            rm.open_connections()
-    except Exception:
-        relay_errors += 1
+    rm.run_sync()
 
     latest: dict[int, object] = {}
-    start = time.time()
     mp = getattr(rm, "message_pool", None)
-    while time.time() - start < timeout_seconds:
-        got = False
-        if mp is not None and hasattr(mp, "has_events") and hasattr(mp, "get_event"):
-            while mp.has_events():
-                got = True
-                msg = mp.get_event()
-                ev = _extract_event_from_msg(msg)
-                if ev is None:
-                    continue
-                kind = int(_event_get(ev, "kind") or 0)
-                created_at = int(_event_get(ev, "created_at") or 0)
-                if kind not in (0, 10002):
-                    continue
-                prev = latest.get(kind)
-                prev_ts = int(_event_get(prev, "created_at") or 0) if prev else 0
-                if created_at > prev_ts:
-                    latest[kind] = ev
-        elif hasattr(rm, "run_sync"):
-            try:
-                rm.run_sync()
-            except Exception:
-                relay_errors += 1
-                break
-        if not got:
-            time.sleep(0.1)
+    if mp is not None:
+        while mp.has_events():
+            msg = mp.get_event()
+            ev = _extract_event_from_msg(msg)
+            if ev is None:
+                continue
+            kind = int(_event_get(ev, "kind") or 0)
+            created_at = int(_event_get(ev, "created_at") or 0)
+            if kind not in (0, 10002):
+                continue
+            prev = latest.get(kind)
+            prev_ts = int(_event_get(prev, "created_at") or 0) if prev else 0
+            if created_at > prev_ts:
+                latest[kind] = ev
 
     try:
-        if hasattr(rm, "close_connections"):
-            rm.close_connections()
+        rm.close_connections()
     except Exception:
         relay_errors += 1
 

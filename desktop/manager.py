@@ -70,30 +70,33 @@ class DesktopAppManager:
         return self._log_buffer[-max_lines:]
 
     def _check_relays_health(self) -> None:
+        from pynostr.relay_manager import RelayManager
         from pynostr.filters import FiltersList, Filters
-        relays = self._store.get_enabled_relays()
-        for r in relays:
-            start = time.time()
+        relay_urls = self._store.get_enabled_relays()
+        if not relay_urls:
+            return
+        rm = RelayManager(timeout=8)
+        for r in relay_urls:
             try:
-                from pynostr.relay_manager import RelayManager
-                rm = RelayManager(timeout=5)
                 rm.add_relay(r)
-                sub_id = f"health-{int(time.time() * 1000)}"
-                filters = FiltersList([Filters(limit=0)])
-                rm.add_subscription_on_all_relays(sub_id, filters)
-                rm.run_sync()
-                latency = int((time.time() - start) * 1000)
-                mp = rm.message_pool
-                if mp.has_eose_notices() or mp.has_events() or mp.has_notices():
-                    self._store.update_relay_latency(r, latency)
-                else:
-                    self._store.mark_relay_used(r, "No response from relay")
-                try:
-                    rm.close_connections()
-                except Exception:
-                    pass
-            except Exception as e:
-                self._store.mark_relay_used(r, str(e))
+            except Exception:
+                pass
+        sub_id = f"health-{int(time.time() * 1000)}"
+        filters = FiltersList([Filters(limit=0)])
+        rm.add_subscription_on_all_relays(sub_id, filters)
+        start = time.time()
+        rm.run_sync()
+        elapsed = int((time.time() - start) * 1000)
+        mp = rm.message_pool
+        for r in relay_urls:
+            if mp and (mp.has_eose_notices() or mp.has_events() or mp.has_notices()):
+                self._store.update_relay_latency(r, elapsed)
+            else:
+                self._store.mark_relay_used(r, "No response from relay")
+        try:
+            rm.close_connections()
+        except Exception:
+            pass
 
     def _run_loop(self):
         while not self._stop_event.is_set():
