@@ -77,7 +77,7 @@ def check_relays(
     for url in relay_urls:
         rm: Optional[RelayManager] = None
         try:
-            rm = RelayManager(timeout=4)
+            rm = RelayManager(timeout=15)
             rm.add_relay(url)
             filters = FiltersList([Filters(limit=0)])
             rm.add_subscription_on_all_relays("health", filters)

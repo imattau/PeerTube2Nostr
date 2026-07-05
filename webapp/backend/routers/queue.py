@@ -111,7 +111,7 @@ def publish_signed(
     if not ev.sig or not ev.id:
         raise HTTPException(400, "Signed event must have id and sig")
 
-    rm = RelayManager(timeout=6)
+    rm = RelayManager(timeout=15)
     for r in relays:
         rm.add_relay(r)
     rm.publish_event(ev)

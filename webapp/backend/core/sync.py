@@ -30,7 +30,7 @@ def import_nip65_relays(
     else:
         return 0
 
-    rm = RelayManager(timeout=8)
+    rm = RelayManager(timeout=15)
     for r in bootstrap_relays:
         try:
             rm.add_relay(r)

@@ -243,7 +243,7 @@ class StateSyncer:
         }
 
     def _publish_event(self, ev: Event) -> str:
-        rm = RelayManager(timeout=6)
+        rm = RelayManager(timeout=15)
         for r in self.relays:
             try:
                 rm.add_relay(r)
@@ -263,7 +263,7 @@ class StateSyncer:
         if not self.nsec or not self.relays:
             return None
         self._ensure_key()
-        rm = RelayManager(timeout=8)
+        rm = RelayManager(timeout=15)
         for r in self.relays:
             try:
                 rm.add_relay(r)

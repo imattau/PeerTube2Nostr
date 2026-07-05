@@ -108,7 +108,7 @@ class NostrPublisher:
         else:
             raise RuntimeError("Unable to sign event with current pynostr version.")
 
-        rm = RelayManager(timeout=6)
+        rm = RelayManager(timeout=15)
         for r in relays:
             rm.add_relay(r)
         rm.publish_event(ev)
