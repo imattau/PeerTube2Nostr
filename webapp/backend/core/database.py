@@ -903,3 +903,4 @@ class Store:
         self._ensure_setting("max_posts_per_hour", "3")
         self._ensure_setting("max_posts_per_day_per_source", "1")
         self.conn.commit()
+        self.seed_default_relays_if_empty()
