@@ -29,10 +29,11 @@ const storedPasskeyPubkey = ref('')
 
 const showingPasskeyImport = ref(false)
 const showingNsecInput = ref(false)
+const pkOpts = { rpName: 'PeerTube2Nostr', storage: sessionStorage }
 
 onMounted(async () => {
   passkeySupported.value = await isPRFSupported()
-  storedPasskeyPubkey.value = getStoredPasskeyPubkey() || ''
+  storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
   if (typeof window !== 'undefined' && 'nostr' in window) {
     nip07Available.value = true
     try {
@@ -45,7 +46,7 @@ onMounted(async () => {
 async function createPasskey() {
   errorMsg.value = ''
   try {
-    const result = await registerPasskeyIdentity({ rpName: 'PeerTube2Nostr' })
+    const result = await registerPasskeyIdentity(pkOpts)
     passkeyPubkey.value = result.pubkey
     passkeyNsecHex.value = bytesToHex(result.secretKey as Uint8Array)
     identityMethod.value = 'passkey-create'
@@ -60,7 +61,7 @@ async function importPasskey() {
   if (!importNsecInput.value) return
   errorMsg.value = ''
   try {
-    const result = await importPasskeyIdentityFromNsec(importNsecInput.value, { rpName: 'PeerTube2Nostr' })
+    const result = await importPasskeyIdentityFromNsec(importNsecInput.value, pkOpts)
     passkeyPubkey.value = result.pubkey
     passkeyNsecHex.value = bytesToHex(result.secretKey as Uint8Array)
     identityMethod.value = 'passkey-import'

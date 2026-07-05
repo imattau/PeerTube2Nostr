@@ -70,28 +70,33 @@ async function syncProfile() {
   syncing.value = false
 }
 
+const pkOpts = { rpName: 'PeerTube2Nostr', storage: sessionStorage }
+
 async function setupPasskey() {
   try {
-    await registerPasskeyIdentity({ rpName: 'PeerTube2Nostr' })
-    statusMsg.value = 'New passkey created'
-    storedPasskeyPubkey.value = getStoredPasskeyPubkey() || ''
+    const result = await registerPasskeyIdentity(pkOpts)
+    const nsec = nip19.nsecEncode(result.secretKey as Uint8Array)
+    await api.setNsec(nsec)
+    statusMsg.value = 'New passkey created and stored in keyring'
+    storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
   } catch (e: any) { alert(e.message) }
 }
 
 async function importPasskey() {
   if (!passkeyImportNsec.value) return
   try {
-    await importPasskeyIdentityFromNsec(passkeyImportNsec.value, { rpName: 'PeerTube2Nostr' })
-    statusMsg.value = 'NSEC imported into passkey'
+    await importPasskeyIdentityFromNsec(passkeyImportNsec.value, pkOpts)
+    await api.setNsec(passkeyImportNsec.value)
+    statusMsg.value = 'NSEC imported into passkey and stored in keyring'
     passkeyImportNsec.value = ''
     showPasskeyImport.value = false
-    storedPasskeyPubkey.value = getStoredPasskeyPubkey() || ''
+    storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
   } catch (e: any) { alert(e.message) }
 }
 
 async function exportPasskeyNsec() {
   try {
-    const nsec = await exportPasskeyIdentityAsNsec()
+    const nsec = await exportPasskeyIdentityAsNsec(undefined, pkOpts)
     nsecValue.value = nsec
     showNsec.value = true
   } catch (e: any) { alert(e.message) }
@@ -100,7 +105,7 @@ async function exportPasskeyNsec() {
 onMounted(async () => {
   await load()
   passkeySupported.value = await isPRFSupported()
-  storedPasskeyPubkey.value = getStoredPasskeyPubkey() || ''
+  storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
 })
 
 function npub(hex: string): string {
