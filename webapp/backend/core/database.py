@@ -402,10 +402,16 @@ class Store:
             norm = self.n.normalise_relay_url(relay_url)
         except Exception:
             norm = None
-        self.conn.execute(
-            "UPDATE relays SET last_used_ts=?, last_error=?, latency_ms=NULL WHERE relay_url_norm=? OR relay_url=?",
-            (ts, (error[:1000] if error else None), norm, relay_url),
-        )
+        if error:
+            self.conn.execute(
+                "UPDATE relays SET last_used_ts=?, last_error=?, latency_ms=NULL WHERE relay_url_norm=? OR relay_url=?",
+                (ts, error[:1000], norm, relay_url),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE relays SET last_used_ts=?, last_error=NULL WHERE relay_url_norm=? OR relay_url=?",
+                (ts, norm, relay_url),
+            )
         self.conn.commit()
 
     def update_relay_latency(self, relay_url: str, latency_ms: int) -> None:

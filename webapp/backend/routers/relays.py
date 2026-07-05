@@ -1,6 +1,9 @@
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from pynostr.filters import Filters, FiltersList
+from pynostr.relay_manager import RelayManager
 
 from core.database import Store, get_stored_nsec
 from core.utils import UrlNormaliser
@@ -63,6 +66,42 @@ def enable_relay(relay_id: int, store: Store = Depends(get_store)):
 def disable_relay(relay_id: int, store: Store = Depends(get_store)):
     store.set_relay_enabled(str(relay_id), False)
     return {"ok": True}
+
+
+@router.post("/check")
+def check_relays(
+    store: Store = Depends(get_store),
+):
+    relay_urls = store.get_enabled_relays()
+    results: list[dict] = []
+    for url in relay_urls:
+        rm: Optional[RelayManager] = None
+        try:
+            rm = RelayManager(timeout=4)
+            rm.add_relay(url)
+            filters = FiltersList([Filters(limit=0)])
+            rm.add_subscription_on_all_relays("health", filters)
+            start = time.time()
+            rm.run_sync()
+            elapsed = int((time.time() - start) * 1000)
+            mp = rm.message_pool
+            healthy = mp is not None and (mp.has_eose_notices() or mp.has_events() or mp.has_notices())
+            if healthy:
+                store.update_relay_latency(url, elapsed)
+                results.append({"relay_url": url, "latency_ms": elapsed, "error": None})
+            else:
+                store.mark_relay_used(url, "No response from relay")
+                results.append({"relay_url": url, "latency_ms": None, "error": "No response"})
+        except Exception as e:
+            store.mark_relay_used(url, str(e))
+            results.append({"relay_url": url, "latency_ms": None, "error": str(e)})
+        finally:
+            if rm is not None:
+                try:
+                    rm.close_connections()
+                except Exception:
+                    pass
+    return {"results": results}
 
 
 @router.post("/import-nip65")

@@ -4,10 +4,19 @@ import { api, type Relay } from '@/api/client'
 
 const relays = ref<Relay[]>([])
 const loading = ref(true)
+const checking = ref(false)
 const showAdd = ref(false)
 const addUrl = ref('')
 const adding = ref(false)
 const importing = ref(false)
+
+async function checkHealth() {
+  checking.value = true
+  try {
+    await api.checkRelays()
+  } catch { }
+  checking.value = false
+}
 
 async function load() {
   loading.value = true
@@ -66,7 +75,10 @@ function latencyLabel(latency: number | null): string {
   return `${latency}ms`
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  checkHealth()
+})
 </script>
 
 <template>
@@ -76,6 +88,7 @@ onMounted(load)
         <div class="heading-1">Relays</div>
         <div class="body mt-8">Nostr relay connectivity and publishing health</div>
       </div>
+      <button class="button-default mr-8" :disabled="checking" @click="checkHealth">{{ checking ? 'Checking...' : 'Check health' }}</button>
       <button class="button-default mr-8" :disabled="importing" @click="importNip65">{{ importing ? 'Importing...' : 'Import from NIP-65' }}</button>
       <button class="button-primary" @click="showAdd = true">+ Add relay</button>
     </div>
