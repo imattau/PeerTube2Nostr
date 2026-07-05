@@ -18,6 +18,8 @@ const storedPasskeyPubkey = ref('')
 const showPasskeyImport = ref(false)
 const passkeyImportNsec = ref('')
 const syncing = ref(false)
+const nip07Available = ref(false)
+const nip07Pubkey = ref('')
 
 async function load() {
   loading.value = true
@@ -106,6 +108,13 @@ onMounted(async () => {
   await load()
   passkeySupported.value = await isPRFSupported()
   storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
+  if (typeof window !== 'undefined' && 'nostr' in window) {
+    nip07Available.value = true
+    try {
+      const win = window as any
+      nip07Pubkey.value = await win.nostr.getPublicKey()
+    } catch { }
+  }
 })
 
 function npub(hex: string): string {
@@ -178,6 +187,19 @@ function npub(hex: string): string {
         <div class="flex gap-8 mt-8">
           <button class="button-primary" :disabled="!passkeyImportNsec" @click="importPasskey">Import</button>
           <button class="button-default" @click="showPasskeyImport = false; passkeyImportNsec = ''">Cancel</button>
+        </div>
+      </div>
+
+      <!-- NIP-07 Browser Extension -->
+      <div class="action-row" v-if="nip07Available">
+        <div class="action-info">
+          <div class="action-title">NIP-07 Browser Extension</div>
+          <div class="action-subtitle" v-if="nip07Pubkey" style="word-break:break-all">{{ npub(nip07Pubkey) }}</div>
+          <div class="action-subtitle" v-else>Sign via browser extension (Alby, nos2x, etc.)</div>
+        </div>
+        <div class="action-right">
+          <span v-if="nip07Pubkey" class="badge badge-success">Detected</span>
+          <span v-else class="badge badge-error">Not detected</span>
         </div>
       </div>
 
