@@ -6,7 +6,7 @@ from pynostr.filters import Filters, FiltersList
 from pynostr.relay_manager import RelayManager
 
 from core.database import Store, get_stored_nsec
-from core.utils import UrlNormaliser
+from core.utils import UrlNormaliser, DEFAULT_RELAYS
 from core.sync import import_nip65_relays
 from auth import verify_api_key
 from dependencies import get_store, get_normaliser
@@ -114,8 +114,16 @@ def import_nip65(
     if not nsec:
         raise HTTPException(status_code=400, detail="No NSEC configured. Set one in settings first.")
     if not bootstrap_relays:
-        bootstrap_relays = store.get_enabled_relays()
-    if not bootstrap_relays:
+        bootstrap_relays = list(store.get_enabled_relays())
+    # Always include well-known relays to find the list even if it's not
+    # on the user's configured relays.
+    seen = set()
+    merged: list[str] = []
+    for r in list(bootstrap_relays) + DEFAULT_RELAYS:
+        if r not in seen:
+            seen.add(r)
+            merged.append(r)
+    if not merged:
         raise HTTPException(status_code=400, detail="No bootstrap relays available. Add at least one relay first.")
-    count = import_nip65_relays(nsec=nsec, store=store, n=n, bootstrap_relays=bootstrap_relays, log_fn=print)
+    count = import_nip65_relays(nsec=nsec, store=store, n=n, bootstrap_relays=merged, log_fn=print)
     return {"imported": count}
