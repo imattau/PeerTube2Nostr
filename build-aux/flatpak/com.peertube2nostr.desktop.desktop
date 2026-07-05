@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PeerTube2Nostr
+GenericName=PeerTube to Nostr Publisher
+Comment=Publish PeerTube channel videos to Nostr
+Exec=peertube2nostr
+Icon=com.peertube2nostr.desktop
+Terminal=false
+Categories=Network;Video;
+MimeType=
+X-Flatpak=com.peertube2nostr.desktop

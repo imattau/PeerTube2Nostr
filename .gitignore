@@ -8,3 +8,15 @@ __pycache__/
 *.db-wal
 peertube_to_nostr.db
 figma_exports/
+
+# Rust / Tauri
+src-tauri/target/
+
+# Frontend
+webapp/frontend/node_modules/
+webapp/frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp

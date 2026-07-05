@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.peertube2nostr.desktop</id>
+  <metadata_license>LGPL-2.1-only</metadata_license>
+  <project_license>LGPL-2.1-only</project_license>
+  <name>PeerTube2Nostr</name>
+  <summary>Publish PeerTube channel videos to Nostr</summary>
+  <description>
+    <p>
+      PeerTube2Nostr ingests videos from PeerTube channels using the PeerTube API
+      as the primary source, with RSS/Atom as a fallback. It then publishes a
+      Nostr note per video with proper attribution and playback links.
+    </p>
+  </description>
+  <categories>
+    <category>Network</category>
+    <category>Video</category>
+  </categories>
+  <url type="homepage">https://github.com/imattau/PeerTube2Nostr</url>
+  <url type="bugtracker">https://github.com/imattau/PeerTube2Nostr/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Dashboard overview</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.4" date="2026-07-05"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

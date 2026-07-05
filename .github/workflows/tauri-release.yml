@@ -1,0 +1,78 @@
+name: Build and Release Tauri Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundle: deb appimage rpm
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            bundle: dmg
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundle: msi nsis
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: ${{ matrix.platform == 'ubuntu-latest' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - name: Install macOS dependencies
+        if: ${{ matrix.platform == 'macos-latest' }}
+        run: |
+          brew install webkit2gtk || true
+
+      - name: Install frontend dependencies
+        run: |
+          cd webapp/frontend
+          npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "PeerTube2Nostr ${{ github.ref_name }}"
+          releaseBody: "See the assets to download and install this release."
+          releaseDraft: true
+          includeDebug: false
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}

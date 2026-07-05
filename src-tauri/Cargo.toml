@@ -1,0 +1,37 @@
+[package]
+name = "peertube2nostr"
+version = "0.1.4"
+description = "Publish PeerTube channel videos to Nostr"
+authors = ["imattau"]
+license = "LGPL-2.1-only"
+edition = "2021"
+
+[lib]
+name = "peertube2nostr_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+nostr-sdk = { version = "0.40", features = [] }
+chrono = "0.4"
+url = "2"
+directories = "5"
+log = "0.4"
+env_logger = "0.11"
+keyring = "3"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = ["tray-icon"]
+custom-protocol = ["tauri/custom-protocol"]
+tray-icon = ["tauri/tray-icon"]

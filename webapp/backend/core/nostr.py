@@ -1,7 +1,24 @@
+from typing import Optional, List
+
 from pynostr.event import Event
 from pynostr.key import PrivateKey
 from pynostr.relay_manager import RelayManager
-from typing import List
+
+
+def _privkey_to_hex(priv) -> Optional[str]:
+    for attr in ("hex", "to_hex", "private_key", "secret", "raw_secret"):
+        val = getattr(priv, attr, None)
+        try:
+            if callable(val):
+                v = val()
+            else:
+                v = val
+        except Exception:
+            continue
+        if isinstance(v, str) and v:
+            return v
+    return None
+
 
 class NostrPublisher:
     @staticmethod
@@ -9,7 +26,7 @@ class NostrPublisher:
         return (p.get("summary") or "").strip()
 
     @staticmethod
-    def _build_tags(p: dict) -> tuple[int, list[list[str]]]:
+    def _build_tags(p: dict) -> tuple:
         title = (p.get("title") or "").strip()
         author = (p.get("channel_name") or p.get("account_name") or "unknown").strip()
         mp4 = p.get("direct_url")
@@ -64,7 +81,7 @@ class NostrPublisher:
         return kind, tags
 
     @staticmethod
-    def publish(nsec: str, relays: List[str], content: str, kind: int, tags: list[list[str]]) -> str:
+    def publish(nsec: str, relays: list[str], content: str, kind: int, tags: list[list[str]]) -> str:
         priv = PrivateKey.from_nsec(nsec)
         pub_hex = priv.public_key.hex()
         try:
@@ -84,18 +101,16 @@ class NostrPublisher:
             try:
                 ev.sign(priv)
             except TypeError:
-                priv_hex = priv.hex()
+                priv_hex = _privkey_to_hex(priv)
+                if not priv_hex:
+                    raise
                 ev.sign(priv_hex)
         else:
             raise RuntimeError("Unable to sign event with current pynostr version.")
 
         rm = RelayManager(timeout=6)
-        for r in relays: rm.add_relay(r)
+        for r in relays:
+            rm.add_relay(r)
         rm.publish_event(ev)
         rm.run_sync()
-        try:
-            if hasattr(rm, "close_connections"):
-                rm.close_connections()
-        except Exception:
-            pass
         return ev.id

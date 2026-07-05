@@ -1,0 +1,45 @@
+{
+  "id": "com.peertube2nostr.desktop",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "46",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "peertube2nostr",
+  "finish-args": [
+    "--share=network",
+    "--socket=x11",
+    "--socket=wayland",
+    "--share=ipc",
+    "--device=dri",
+    "--filesystem=home"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_HOME": "/run/build/peertube2nostr/cargo"
+    }
+  },
+  "modules": [
+    {
+      "name": "peertube2nostr",
+      "buildsystem": "simple",
+      "build-commands": [
+        "npm ci --prefix webapp/frontend",
+        "npm run build --prefix webapp/frontend",
+        "cargo build --manifest-path src-tauri/Cargo.toml --release",
+        "install -Dm755 src-tauri/target/release/peertube2nostr /app/bin/peertube2nostr",
+        "install -Dm644 build-aux/flatpak/com.peertube2nostr.desktop.desktop /app/share/applications/com.peertube2nostr.desktop.desktop",
+        "install -Dm644 build-aux/flatpak/com.peertube2nostr.desktop.metainfo.xml /app/share/metainfo/com.peertube2nostr.desktop.metainfo.xml",
+        "install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.peertube2nostr.desktop.png",
+        "install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/com.peertube2nostr.desktop.png",
+        "install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/64x64/apps/com.peertube2nostr.desktop.png"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../.."
+        }
+      ]
+    }
+  ]
+}

@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
 """
-PeerTube -> Nostr publisher (single file, classes, SQLite)
+PeerTube -> Nostr publisher (CLI entry point)
 
 Primary ingest = PeerTube API (channel videos)
 Fallback ingest = RSS/Atom feed (if API fails or not configured)
-
-Key points
-- Store "sources" in DB (a source can be API-configured channel, and/or RSS feed)
-- Ingest flow per source:
-  1) Try API: /api/v1/video-channels/<channel>/videos (primary)
-  2) If API not configured or errors, try RSS feed URL (fallback)
-- MP4-first for Nostr embed, HLS fallback, watch URL always included
-- Feeds/relays validated, canonicalised, de-duped using *_url_norm unique indexes
 
 Dependencies:
   pip install requests feedparser pynostr
@@ -19,16 +11,19 @@ Dependencies:
 Examples
   python peertube_nostr.py init --db peertube.db
   python peertube_nostr.py add-relay wss://relay.damus.io --db peertube.db
-
-  # Preferred: add channel by URL (API primary), optionally add RSS fallback too
   python peertube_nostr.py add-channel "https://example.tube/c/mychannel" --db peertube.db
-  python peertube_nostr.py set-rss 1 "https://example.tube/feeds/videos.xml?channelId=123" --db peertube.db
-
-  # Or add RSS-only source (will rely on RSS listing)
-  python peertube_nostr.py add-rss "https://example.tube/feeds/videos.xml?channelId=123" --db peertube.db
-
-   NOSTR_NSEC="nsec1..." python peertube_nostr.py run --db peertube.db
+  NOSTR_NSEC="nsec1..." python peertube_nostr.py run --db peertube.db
 """
+
+import os
+import sys
+
+_project_root = os.path.dirname(os.path.abspath(__file__))
+_backend_dir = os.path.join(_project_root, 'webapp', 'backend')
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 __version__ = "0.1.0"
 
@@ -36,1797 +31,44 @@ import argparse
 import calendar
 import getpass
 import json
-import os
-import re
-import sqlite3
-import sys
+import shlex
 import threading
 import time
-import shlex
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
+from datetime import datetime
 from queue import Queue, Empty
-from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Any
-from urllib.parse import urlparse, urlunparse
+from typing import Optional
 
-import feedparser
-import requests
 from pynostr.event import Event
 from pynostr.filters import Filters, FiltersList
 from pynostr.key import PrivateKey
 from pynostr.relay_manager import RelayManager
-try:
-    import keyring
-    import keyring.errors
-except Exception:  # pragma: no cover - optional dependency
-    keyring = None
+
 try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
     from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.styles import Style
-except Exception:  # pragma: no cover - optional dependency
+except Exception:
     PromptSession = None
 try:
     from textual.app import App, ComposeResult
     from textual.containers import Vertical, Horizontal
     from textual.widgets import Header, Footer, Input, Static, RichLog, ListView, ListItem, Label
-except Exception:  # pragma: no cover - optional dependency
+except Exception:
     App = None
 
-
-DEFAULT_RELAYS = ["wss://relay.damus.io", "wss://nos.lol"]
-KEYRING_SERVICE = "peertube_nostr"
-
-
-def _keyring_available() -> bool:
-    return keyring is not None
-
-
-def _keyring_user(db_path: str) -> str:
-    return os.path.abspath(db_path)
-
-
-def _nsec_file_path(db_path: str) -> str:
-    return os.environ.get("NSEC_FILE") or (os.path.abspath(db_path) + ".nsec")
-
-
-def _read_secret_file(path: str) -> Optional[str]:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read().strip() or None
-    except FileNotFoundError:
-        return None
-
-
-def _write_secret_file(path: str, value: str) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(value.strip() + "\n")
-
-
-def get_stored_nsec(db_path: str) -> Optional[str]:
-    if _keyring_available():
-        try:
-            nsec = keyring.get_password(KEYRING_SERVICE, _keyring_user(db_path))
-            if nsec:
-                return nsec
-        except keyring.errors.KeyringError:
-            pass
-    return _read_secret_file(_nsec_file_path(db_path))
-
-
-def set_stored_nsec(db_path: str, nsec: str) -> Tuple[str, Optional[str]]:
-    if _keyring_available():
-        try:
-            keyring.set_password(KEYRING_SERVICE, _keyring_user(db_path), nsec)
-            return "keyring", None
-        except keyring.errors.KeyringError:
-            pass
-    path = _nsec_file_path(db_path)
-    _write_secret_file(path, nsec)
-    return "file", path
-
-
-def clear_stored_nsec(db_path: str) -> bool:
-    removed = False
-    if _keyring_available():
-        try:
-            keyring.delete_password(KEYRING_SERVICE, _keyring_user(db_path))
-            removed = True
-        except keyring.errors.PasswordDeleteError:
-            pass
-    path = _nsec_file_path(db_path)
-    try:
-        os.remove(path)
-        removed = True
-    except FileNotFoundError:
-        pass
-    return removed
-
-
-@dataclass
-class IngestedItem:
-    source_id: int
-    entry_key: str
-    watch_url: str
-    title: str
-    summary: str
-    peertube_base: Optional[str]
-    peertube_video_id: Optional[str]
-    hls_url: Optional[str]
-    mp4_url: Optional[str]
-    peertube_instance: Optional[str]
-    channel_name: Optional[str]
-    channel_url: Optional[str]
-    account_name: Optional[str]
-    account_url: Optional[str]
-    published_ts: Optional[int]
-    thumbnail_url: Optional[str] = None
-    duration: Optional[int] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-
-
-class UrlNormaliser:
-    ALLOWED_RELAY_SCHEMES = {"wss", "ws"}
-    ALLOWED_HTTP_SCHEMES = {"https", "http"}
-
-    def __init__(self) -> None:
-        self._watch_patterns = [
-            re.compile(r"/videos/watch/([A-Za-z0-9_-]+)"),
-            re.compile(r"/w/([A-Za-z0-9_-]+)"),
-        ]
-        # PeerTube channel URL patterns seen in the wild
-        self._channel_patterns = [
-            re.compile(r"^/c/([^/]+)$"),
-            re.compile(r"^/c/([^/]+)/videos$"),
-            re.compile(r"^/video-channels/([^/]+)$"),
-            re.compile(r"^/video-channels/([^/]+)/videos$"),
-            re.compile(r"^/accounts/([^/]+)$"),  # sometimes used, not always a channel
-        ]
-
-    @staticmethod
-    def now_ts() -> int:
-        return int(time.time())
-
-    def _normalise_url(self, url: str) -> str:
-        raw = (url or "").strip()
-        if not raw:
-            raise ValueError("URL is empty")
-
-        p = urlparse(raw)
-        if not p.scheme or not p.netloc:
-            raise ValueError(f"Invalid URL: {raw}")
-
-        scheme = p.scheme.lower()
-        host = p.hostname.lower() if p.hostname else ""
-        if not host:
-            raise ValueError(f"Invalid URL host: {raw}")
-
-        port = p.port
-        if (scheme == "https" and port == 443) or (scheme == "http" and port == 80) or (scheme == "wss" and port == 443) or (scheme == "ws" and port == 80):
-            port = None
-
-        netloc = host if port is None else f"{host}:{port}"
-
-        path = p.path or "/"
-        if path != "/" and path.endswith("/"):
-            path = path.rstrip("/")
-
-        return urlunparse((scheme, netloc, path, "", p.query or "", ""))
-
-    def normalise_http_url(self, url: str) -> str:
-        u = self._normalise_url(url)
-        p = urlparse(u)
-        if p.scheme not in self.ALLOWED_HTTP_SCHEMES:
-            raise ValueError("URL must be http or https")
-        return u
-
-    def normalise_feed_url(self, url: str) -> str:
-        return self.normalise_http_url(url)
-
-    def normalise_relay_url(self, url: str) -> str:
-        u = self._normalise_url(url)
-        p = urlparse(u)
-        if p.scheme not in self.ALLOWED_RELAY_SCHEMES:
-            raise ValueError("Relay URL must be ws or wss")
-        return u
-
-    @staticmethod
-    def looks_like_peertube_feed(url: str) -> bool:
-        u = (url or "").lower()
-        return "/feeds/" in u or "feeds/videos" in u or "videos.xml" in u
-
-    @staticmethod
-    def normalise_watch_url(url: str) -> str:
-        u = urlparse((url or "").strip())
-        return f"{u.scheme}://{u.netloc}{u.path}" + (f"?{u.query}" if u.query else "")
-
-    @staticmethod
-    def normalise_base(url: str) -> str:
-        u = urlparse(url)
-        return f"{u.scheme}://{u.netloc}"
-
-    def extract_watch_id(self, watch_url: str) -> Optional[Tuple[str, str]]:
-        base = self.normalise_base(watch_url)
-        path = urlparse(watch_url).path
-        for pat in self._watch_patterns:
-            m = pat.search(path)
-            if m:
-                return base, m.group(1)
-        return None
-
-    def extract_channel_ref(self, channel_url: str) -> Tuple[str, str]:
-        """
-        Takes a channel URL like:
-          https://instance.tld/c/mychannel
-          https://instance.tld/video-channels/mychannel
-        Returns:
-          (base, channel_handle) where channel_handle is the last segment.
-        """
-        u = self.normalise_http_url(channel_url)
-        p = urlparse(u)
-        path = p.path.rstrip("/")
-        if path.endswith("/videos"):
-            path = path[: -len("/videos")]
-        for pat in self._channel_patterns:
-            m = pat.match(path)
-            if m:
-                return f"{p.scheme}://{p.netloc}", m.group(1)
-        # Best-effort: take last segment if it looks plausible
-        seg = path.strip("/").split("/")[-1] if path.strip("/") else ""
-        if not seg:
-            raise ValueError("Could not extract channel handle from URL")
-        return f"{p.scheme}://{p.netloc}", seg
-
-
-class Store:
-    def __init__(self, db_path: str, n: UrlNormaliser) -> None:
-        self.db_path = db_path
-        self.n = n
-        self.conn = sqlite3.connect(db_path)
-        self.conn.execute("PRAGMA journal_mode=WAL;")
-        self.conn.execute("PRAGMA synchronous=NORMAL;")
-        self.conn.execute("PRAGMA foreign_keys=ON;")
-
-    def close(self) -> None:
-        self.conn.close()
-
-    def _has_column(self, table: str, col: str) -> bool:
-        cur = self.conn.execute(f"PRAGMA table_info({table})")
-        return any(r[1] == col for r in cur.fetchall())
-
-    def _add_column(self, table: str, col: str, coltype: str) -> None:
-        if not self._has_column(table, col):
-            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
-
-    def init_schema(self) -> None:
-        # "sources" replaces the old "feeds" concept:
-        # - api_base + api_channel is the primary ingest config
-        # - rss_url is optional fallback ingest
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-                enabled INTEGER NOT NULL DEFAULT 1,
-                created_ts INTEGER NOT NULL,
-
-                api_base TEXT,
-                api_base_norm TEXT,
-                api_channel TEXT,              -- channel handle/name
-                api_channel_url TEXT,
-                api_channel_url_norm TEXT,
-
-                rss_url TEXT,
-                rss_url_norm TEXT,
-
-                last_polled_ts INTEGER,
-                last_error TEXT,
-                lookback_days INTEGER
-            );
-            """
-        )
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_sources_enabled ON sources(enabled);")
-        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sources_api ON sources(api_base_norm, api_channel);")
-        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_sources_rss ON sources(rss_url_norm);")
-
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS relays (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                relay_url TEXT NOT NULL UNIQUE,
-                relay_url_norm TEXT,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                created_ts INTEGER NOT NULL,
-                last_used_ts INTEGER,
-                last_error TEXT
-            );
-            """
-        )
-        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_relays_relay_url_norm ON relays(relay_url_norm);")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_relays_enabled ON relays(enabled);")
-
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_id INTEGER NOT NULL,
-                entry_key TEXT NOT NULL,
-
-                watch_url TEXT NOT NULL,
-                watch_url_norm TEXT NOT NULL,
-
-                peertube_base TEXT,
-                peertube_video_id TEXT,
-
-                peertube_instance TEXT,
-                channel_name TEXT,
-                channel_url TEXT,
-                account_name TEXT,
-                account_url TEXT,
-
-                title TEXT,
-                summary TEXT,
-                hls_url TEXT,
-                direct_url TEXT,  -- MP4 preferred
-                published_ts INTEGER,
-
-                status TEXT NOT NULL DEFAULT 'pending', -- pending|posted|failed|cancelled
-                nostr_event_id TEXT,
-                error TEXT,
-
-                first_seen_ts INTEGER NOT NULL,
-                last_attempt_ts INTEGER,
-                posted_ts INTEGER,
-
-                FOREIGN KEY(source_id) REFERENCES sources(id) ON DELETE CASCADE,
-                UNIQUE(source_id, entry_key)
-            );
-            """
-        )
-
-        # Migrations for older DBs (safe no-ops for new DBs)
-        self._add_column("sources", "api_base_norm", "TEXT")
-        self._add_column("sources", "api_channel_url_norm", "TEXT")
-        self._add_column("sources", "rss_url_norm", "TEXT")
-        self._add_column("sources", "lookback_days", "INTEGER")
-
-        self._add_column("videos", "peertube_instance", "TEXT")
-        self._add_column("videos", "channel_name", "TEXT")
-        self._add_column("videos", "channel_url", "TEXT")
-        self._add_column("videos", "account_name", "TEXT")
-        self._add_column("videos", "account_url", "TEXT")
-        self._add_column("videos", "published_ts", "INTEGER")
-        self._add_column("videos", "thumbnail_url", "TEXT")
-        self._add_column("videos", "duration", "INTEGER")
-        self._add_column("videos", "width", "INTEGER")
-        self._add_column("videos", "height", "INTEGER")
-
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_watch_norm ON videos(watch_url_norm);")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_first_seen ON videos(first_seen_ts);")
-
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-            """
-        )
-
-        self._ensure_setting("min_publish_interval_seconds", "1200")
-        self._ensure_setting("max_posts_per_hour", "3")
-        self._ensure_setting("max_posts_per_day_per_source", "1")
-
-        self.conn.commit()
-
-        # Best-effort migration from legacy "feeds" table if it exists:
-        # If a user had an older DB, keep it simple: treat feed_url as rss_url source.
-        self._migrate_legacy_feeds_to_sources()
-
-    def _migrate_legacy_feeds_to_sources(self) -> None:
-        try:
-            cur = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='feeds'")
-            if not cur.fetchone():
-                return
-            # If sources already has rows, do not migrate again
-            cur2 = self.conn.execute("SELECT COUNT(*) FROM sources")
-            if int(cur2.fetchone()[0]) > 0:
-                return
-
-            # Move enabled feed_url into sources.rss_url
-            rows = self.conn.execute("SELECT feed_url, enabled, created_ts, last_polled_ts, last_error FROM feeds").fetchall()
-            for feed_url, enabled, created_ts, last_polled_ts, last_error in rows:
-                try:
-                    rss_norm = self.n.normalise_feed_url(feed_url)
-                except Exception:
-                    rss_norm = None
-                self.conn.execute(
-                    """
-                    INSERT OR IGNORE INTO sources
-                    (enabled, created_ts, rss_url, rss_url_norm, last_polled_ts, last_error)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (enabled, created_ts or self.n.now_ts(), feed_url, rss_norm, last_polled_ts, last_error),
-                )
-            self.conn.commit()
-        except Exception:
-            # ignore migration failures
-            pass
-
-    # Settings
-    def _ensure_setting(self, key: str, value: str) -> None:
-        cur = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,))
-        if cur.fetchone() is None:
-            self.conn.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (key, value))
-
-    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        row = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        if not row:
-            return default
-        return str(row[0]) if row[0] is not None else default
-
-    def set_setting(self, key: str, value: str) -> None:
-        self.conn.execute(
-            "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-        self.conn.commit()
-
-    def get_publish_limits(self) -> tuple[int, int]:
-        min_interval = int(self.get_setting("min_publish_interval_seconds", "1200") or "1200")
-        max_per_hour = int(self.get_setting("max_posts_per_hour", "3") or "3")
-        return min_interval, max_per_hour
-
-    def get_daily_source_limit(self) -> int:
-        return int(self.get_setting("max_posts_per_day_per_source", "1") or "1")
-
-    # Relays
-    def seed_default_relays_if_empty(self) -> None:
-        cur = self.conn.execute("SELECT COUNT(*) FROM relays")
-        if int(cur.fetchone()[0]) > 0:
-            return
-        ts = self.n.now_ts()
-        for r in DEFAULT_RELAYS:
-            norm = self.n.normalise_relay_url(r)
-            self.conn.execute(
-                "INSERT OR IGNORE INTO relays(relay_url, relay_url_norm, enabled, created_ts) VALUES (?, ?, 1, ?)",
-                (r, norm, ts),
-            )
-        self.conn.commit()
-
-    def add_relay(self, relay_url: str) -> int:
-        return self.add_relay_with_enabled(relay_url, enabled=True)
-
-    def add_relay_with_enabled(self, relay_url: str, enabled: bool) -> int:
-        raw = (relay_url or "").strip()
-        norm = self.n.normalise_relay_url(raw)
-        ts = self.n.now_ts()
-        enabled_val = 1 if enabled else 0
-        self.conn.execute(
-            "INSERT OR IGNORE INTO relays(relay_url, relay_url_norm, enabled, created_ts) VALUES (?, ?, ?, ?)",
-            (raw, norm, enabled_val, ts),
-        )
-        self.conn.commit()
-        row = self.conn.execute("SELECT id FROM relays WHERE relay_url_norm=?", (norm,)).fetchone()
-        if not row:
-            raise RuntimeError("Failed to add relay")
-        return int(row[0])
-
-    def remove_relay(self, relay_id_or_url: str) -> int:
-        s = (relay_id_or_url or "").strip()
-        try:
-            rid = int(s)
-            cur = self.conn.execute("DELETE FROM relays WHERE id=?", (rid,))
-        except ValueError:
-            norm = self.n.normalise_relay_url(s)
-            cur = self.conn.execute("DELETE FROM relays WHERE relay_url_norm=?", (norm,))
-        self.conn.commit()
-        return cur.rowcount
-
-    def remove_source(self, source_id: int) -> int:
-        cur = self.conn.execute("DELETE FROM sources WHERE id=?", (source_id,))
-        self.conn.commit()
-        return cur.rowcount
-
-    def update_relay_url(self, relay_id_or_url: str, new_relay_url: str) -> int:
-        s = (relay_id_or_url or "").strip()
-        new_raw = (new_relay_url or "").strip()
-        new_norm = self.n.normalise_relay_url(new_raw)
-        try:
-            rid = int(s)
-            cur = self.conn.execute(
-                "UPDATE relays SET relay_url=?, relay_url_norm=? WHERE id=?",
-                (new_raw, new_norm, rid),
-            )
-        except ValueError:
-            old_norm = self.n.normalise_relay_url(s)
-            cur = self.conn.execute(
-                "UPDATE relays SET relay_url=?, relay_url_norm=? WHERE relay_url_norm=?",
-                (new_raw, new_norm, old_norm),
-            )
-        self.conn.commit()
-        return cur.rowcount
-
-    def set_relay_enabled(self, relay_id_or_url: str, enabled: bool) -> int:
-        s = (relay_id_or_url or "").strip()
-        val = 1 if enabled else 0
-        try:
-            rid = int(s)
-            cur = self.conn.execute("UPDATE relays SET enabled=? WHERE id=?", (val, rid))
-        except ValueError:
-            norm = self.n.normalise_relay_url(s)
-            cur = self.conn.execute("UPDATE relays SET enabled=? WHERE relay_url_norm=?", (val, norm))
-        self.conn.commit()
-        return cur.rowcount
-
-    def list_relays(self) -> list[tuple]:
-        return self.conn.execute(
-            "SELECT id, enabled, relay_url, relay_url_norm, last_used_ts, last_error FROM relays ORDER BY id ASC"
-        ).fetchall()
-
-    def get_enabled_relays(self) -> list[str]:
-        cur = self.conn.execute("SELECT relay_url FROM relays WHERE enabled=1 ORDER BY id ASC")
-        out: list[str] = []
-        for (u,) in cur.fetchall():
-            try:
-                out.append(self.n.normalise_relay_url(u))
-            except Exception:
-                out.append(str(u))
-        return out
-
-    def mark_relay_used(self, relay_url: str, error: Optional[str]) -> None:
-        ts = self.n.now_ts()
-        try:
-            norm = self.n.normalise_relay_url(relay_url)
-        except Exception:
-            norm = None
-        self.conn.execute(
-            "UPDATE relays SET last_used_ts=?, last_error=? WHERE relay_url_norm=? OR relay_url=?",
-            (ts, (error[:1000] if error else None), norm, relay_url),
-        )
-        self.conn.commit()
-
-    # Sources
-    def add_channel_source(self, channel_url: str) -> int:
-        base, channel = self.n.extract_channel_ref(channel_url)
-        base_norm = self.n.normalise_http_url(base)
-        chan_url_norm = self.n.normalise_http_url(channel_url)
-
-        ts = self.n.now_ts()
-        self.conn.execute(
-            """
-            INSERT OR IGNORE INTO sources
-            (enabled, created_ts, api_base, api_base_norm, api_channel, api_channel_url, api_channel_url_norm)
-            VALUES (1, ?, ?, ?, ?, ?, ?)
-            """,
-            (ts, base, base_norm, channel, channel_url, chan_url_norm),
-        )
-        self.conn.commit()
-        row = self.conn.execute(
-            "SELECT id FROM sources WHERE api_base_norm=? AND api_channel=?",
-            (base_norm, channel),
-        ).fetchone()
-        if not row:
-            raise RuntimeError("Failed to add channel source")
-        return int(row[0])
-
-    def add_rss_source(self, rss_url: str) -> int:
-        raw = (rss_url or "").strip()
-        rss_norm = self.n.normalise_feed_url(raw)
-        ts = self.n.now_ts()
-        self.conn.execute(
-            """
-            INSERT OR IGNORE INTO sources
-            (enabled, created_ts, rss_url, rss_url_norm)
-            VALUES (1, ?, ?, ?)
-            """,
-            (ts, raw, rss_norm),
-        )
-        self.conn.commit()
-        row = self.conn.execute("SELECT id FROM sources WHERE rss_url_norm=?", (rss_norm,)).fetchone()
-        if not row:
-            raise RuntimeError("Failed to add RSS source")
-        return int(row[0])
-
-    def set_source_rss(self, source_id: int, rss_url: str) -> int:
-        raw = (rss_url or "").strip()
-        rss_norm = self.n.normalise_feed_url(raw)
-        cur = self.conn.execute(
-            "UPDATE sources SET rss_url=?, rss_url_norm=? WHERE id=?",
-            (raw, rss_norm, source_id),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-    def clear_source_rss(self, source_id: int) -> int:
-        cur = self.conn.execute(
-            "UPDATE sources SET rss_url=NULL, rss_url_norm=NULL WHERE id=?",
-            (source_id,),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-    def set_source_channel(self, source_id: int, channel_url: str) -> int:
-        base, channel = self.n.extract_channel_ref(channel_url)
-        base_norm = self.n.normalise_http_url(base)
-        chan_url_norm = self.n.normalise_http_url(channel_url)
-        cur = self.conn.execute(
-            """
-            UPDATE sources
-            SET api_base=?, api_base_norm=?, api_channel=?, api_channel_url=?, api_channel_url_norm=?
-            WHERE id=?
-            """,
-            (base, base_norm, channel, channel_url, chan_url_norm, source_id),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-    def clear_source_channel(self, source_id: int) -> int:
-        cur = self.conn.execute(
-            """
-            UPDATE sources
-            SET api_base=NULL, api_base_norm=NULL, api_channel=NULL, api_channel_url=NULL, api_channel_url_norm=NULL
-            WHERE id=?
-            """,
-            (source_id,),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-    def set_source_enabled(self, source_id: int, enabled: bool) -> int:
-        val = 1 if enabled else 0
-        cur = self.conn.execute("UPDATE sources SET enabled=? WHERE id=?", (val, source_id))
-        self.conn.commit()
-        return cur.rowcount
-
-    def list_sources(self) -> list[tuple]:
-        return self.conn.execute(
-            """
-            SELECT id, enabled,
-                   api_base, api_channel, api_channel_url,
-                   rss_url, lookback_days,
-                   last_polled_ts, last_error
-            FROM sources
-            ORDER BY id ASC
-            """
-        ).fetchall()
-
-    def get_source_by_id(self, source_id: int) -> Optional[dict]:
-        row = self.conn.execute(
-            """
-            SELECT id, enabled,
-                   api_base, api_channel, api_channel_url,
-                   rss_url, lookback_days,
-                   last_polled_ts
-            FROM sources
-            WHERE id=?
-            """,
-            (source_id,),
-        ).fetchone()
-        if not row:
-            return None
-        return {
-            "id": int(row[0]),
-            "enabled": int(row[1]),
-            "api_base": row[2],
-            "api_channel": row[3],
-            "api_channel_url": row[4],
-            "rss_url": row[5],
-            "lookback_days": row[6],
-            "last_polled_ts": row[7],
-        }
-
-    def get_enabled_sources(self) -> list[dict]:
-        rows = self.conn.execute(
-            """
-            SELECT id, api_base, api_channel, api_channel_url, rss_url, last_polled_ts, lookback_days
-            FROM sources
-            WHERE enabled=1
-            ORDER BY id ASC
-            """
-        ).fetchall()
-        out = []
-        for r in rows:
-            out.append(
-                {
-                    "id": int(r[0]),
-                    "api_base": r[1],
-                    "api_channel": r[2],
-                    "api_channel_url": r[3],
-                    "rss_url": r[4],
-                    "last_polled_ts": r[5],
-                    "lookback_days": r[6],
-                }
-            )
-        return out
-
-    def set_source_lookback(self, source_id: int, lookback_days: Optional[int]) -> int:
-        cur = self.conn.execute(
-            "UPDATE sources SET lookback_days=? WHERE id=?",
-            (lookback_days, source_id),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-    def mark_source_polled(self, source_id: int, error: Optional[str]) -> None:
-        ts = self.n.now_ts()
-        self.conn.execute(
-            "UPDATE sources SET last_polled_ts=?, last_error=? WHERE id=?",
-            (ts, (error[:1000] if error else None), source_id),
-        )
-        self.conn.commit()
-
-    # Videos
-    def get_metrics(self) -> dict:
-        now_ts = int(time.time())
-        day_start = now_ts - 86400
-        return {
-            "pending": self.count_pending(),
-            "posted_today": self.count_posted_since(day_start),
-            "failed": self.count_failed(),
-            "active_sources": self.count_sources(),
-        }
-
-    def count_pending(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM videos WHERE status='pending'").fetchone()
-        return int(row[0]) if row else 0
-
-    def count_posted(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM videos WHERE status='posted'").fetchone()
-        return int(row[0]) if row else 0
-
-    def count_failed(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM videos WHERE status='failed'").fetchone()
-        return int(row[0]) if row else 0
-
-    def count_posted_since(self, since_ts: int) -> int:
-        row = self.conn.execute(
-            "SELECT COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ?",
-            (since_ts,),
-        ).fetchone()
-        return int(row[0]) if row else 0
-
-    def count_posted_by_source_since(self, since_ts: int) -> dict[int, int]:
-        rows = self.conn.execute(
-            "SELECT source_id, COUNT(*) FROM videos WHERE status='posted' AND posted_ts >= ? GROUP BY source_id",
-            (since_ts,),
-        ).fetchall()
-        return {int(r[0]): int(r[1]) for r in rows}
-
-    def count_posted_since_for_source(self, source_id: int, since_ts: int) -> int:
-        row = self.conn.execute(
-            "SELECT COUNT(*) FROM videos WHERE status='posted' AND source_id=? AND posted_ts >= ?",
-            (source_id, since_ts),
-        ).fetchone()
-        return int(row[0]) if row else 0
-
-    def list_pending(self, limit: int = 10) -> list[tuple]:
-        return self.conn.execute(
-            """
-            SELECT v.id, v.source_id, v.title, v.watch_url, v.first_seen_ts, v.published_ts,
-                   s.api_base, s.api_channel, s.rss_url
-            FROM videos v
-            JOIN sources s ON s.id = v.source_id
-            WHERE v.status='pending' AND s.enabled=1
-            ORDER BY (v.published_ts IS NULL) ASC, v.published_ts ASC, v.first_seen_ts ASC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-    def oldest_posted_since(self, since_ts: int) -> Optional[int]:
-        row = self.conn.execute(
-            "SELECT MIN(posted_ts) FROM videos WHERE status='posted' AND posted_ts >= ?",
-            (since_ts,),
-        ).fetchone()
-        if not row:
-            return None
-        val = row[0]
-        return int(val) if val else None
-
-    def oldest_posted_since_for_source(self, source_id: int, since_ts: int) -> Optional[int]:
-        row = self.conn.execute(
-            "SELECT MIN(posted_ts) FROM videos WHERE status='posted' AND source_id=? AND posted_ts >= ?",
-            (source_id, since_ts),
-        ).fetchone()
-        if not row:
-            return None
-        val = row[0]
-        return int(val) if val else None
-
-    def last_polled_ts(self) -> Optional[int]:
-        row = self.conn.execute("SELECT MAX(last_polled_ts) FROM sources").fetchone()
-        if not row:
-            return None
-        val = row[0]
-        return int(val) if val else None
-
-    def last_posted_ts(self) -> Optional[int]:
-        row = self.conn.execute("SELECT MAX(posted_ts) FROM videos WHERE status='posted'").fetchone()
-        if not row:
-            return None
-        val = row[0]
-        return int(val) if val else None
-
-    def count_sources(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM sources").fetchone()
-        return int(row[0]) if row else 0
-
-    def count_relays(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM relays").fetchone()
-        return int(row[0]) if row else 0
-
-    def video_exists(self, source_id: int, entry_key: str) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM videos WHERE source_id=? AND entry_key=? LIMIT 1",
-            (source_id, entry_key),
-        ).fetchone()
-        return row is not None
-
-    def insert_pending(self, item: IngestedItem) -> None:
-        ts = self.n.now_ts()
-        self.conn.execute(
-            """
-            INSERT OR IGNORE INTO videos
-            (source_id, entry_key, watch_url, watch_url_norm,
-             peertube_base, peertube_video_id,
-             peertube_instance, channel_name, channel_url, account_name, account_url,
-             title, summary, hls_url, direct_url,
-             published_ts, thumbnail_url, duration, width, height,
-             status, first_seen_ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-            """,
-            (
-                item.source_id,
-                item.entry_key,
-                item.watch_url,
-                self.n.normalise_watch_url(item.watch_url),
-                item.peertube_base,
-                item.peertube_video_id,
-                item.peertube_instance,
-                item.channel_name,
-                item.channel_url,
-                item.account_name,
-                item.account_url,
-                item.title,
-                item.summary,
-                item.hls_url,
-                item.mp4_url,
-                item.published_ts,
-                item.thumbnail_url,
-                item.duration,
-                item.width,
-                item.height,
-                ts,
-            ),
-        )
-        self.conn.commit()
-
-    def update_published_ts_if_null(self, source_id: int, entry_key: str, published_ts: int) -> None:
-        self.conn.execute(
-            """
-            UPDATE videos
-            SET published_ts=?
-            WHERE source_id=? AND entry_key=? AND published_ts IS NULL
-            """,
-            (published_ts, source_id, entry_key),
-        )
-        self.conn.commit()
-
-    def next_pending(self) -> Optional[dict]:
-        row = self.conn.execute(
-            """
-            SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
-                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url,
-                   v.thumbnail_url, v.duration, v.width, v.height
-            FROM videos v
-            JOIN sources s ON s.id = v.source_id
-            WHERE v.status='pending' AND s.enabled=1
-            ORDER BY (v.published_ts IS NULL) ASC, v.published_ts ASC, v.first_seen_ts ASC
-            LIMIT 1
-            """
-        ).fetchone()
-        if not row:
-            return None
-        keys = [
-            "id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
-            "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
-            "thumbnail_url", "duration", "width", "height",
-        ]
-        return dict(zip(keys, row))
-
-    def next_pending_eligible(self, now_ts: int, max_per_day_per_source: int, limit: int = 200) -> Optional[dict]:
-        if max_per_day_per_source <= 0:
-            return self.next_pending()
-        rows = self.conn.execute(
-            """
-            SELECT v.id, v.source_id, v.watch_url, v.title, v.summary, v.hls_url, v.direct_url,
-                   v.peertube_instance, v.channel_name, v.channel_url, v.account_name, v.account_url,
-                   v.thumbnail_url, v.duration, v.width, v.height
-            FROM videos v
-            JOIN sources s ON s.id = v.source_id
-            WHERE v.status='pending' AND s.enabled=1
-            ORDER BY (v.published_ts IS NULL) ASC, v.published_ts ASC, v.first_seen_ts ASC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-        if not rows:
-            return None
-        counts = self.count_posted_by_source_since(now_ts - 86400)
-        keys = [
-            "id", "source_id", "watch_url", "title", "summary", "hls_url", "direct_url",
-            "peertube_instance", "channel_name", "channel_url", "account_name", "account_url",
-            "thumbnail_url", "duration", "width", "height",
-        ]
-        for row in rows:
-            sid = int(row[1])
-            if int(counts.get(sid, 0)) < max_per_day_per_source:
-                return dict(zip(keys, row))
-        return None
-
-    def mark_posted(self, video_row_id: int, event_id: str) -> None:
-        ts = self.n.now_ts()
-        self.conn.execute(
-            """
-            UPDATE videos
-            SET status='posted', nostr_event_id=?, posted_ts=?, last_attempt_ts=?, error=NULL
-            WHERE id=?
-            """,
-            (event_id, ts, ts, video_row_id),
-        )
-        self.conn.commit()
-
-    def mark_failed(self, video_row_id: int, err: str) -> None:
-        ts = self.n.now_ts()
-        self.conn.execute(
-            "UPDATE videos SET status='failed', error=?, last_attempt_ts=? WHERE id=?",
-            (err[:2000], ts, video_row_id),
-        )
-        self.conn.commit()
-
-    def clear_pending_for_source(self, source_id: int) -> int:
-        ts = self.n.now_ts()
-        cur = self.conn.execute(
-            """
-            UPDATE videos
-            SET status='cancelled', error='cleared by resync', last_attempt_ts=?
-            WHERE source_id=? AND status='pending'
-            """,
-            (ts, source_id),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-    def retry_failed(self, older_than_seconds: int) -> int:
-        ts = self.n.now_ts()
-        cutoff = ts - older_than_seconds
-        cur = self.conn.execute(
-            """
-            UPDATE videos
-            SET status='pending'
-            WHERE status='failed' AND (last_attempt_ts IS NULL OR last_attempt_ts < ?)
-            """,
-            (cutoff,),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-    def retry_failed_for_source(self, source_id: int, older_than_seconds: int) -> int:
-        ts = self.n.now_ts()
-        cutoff = ts - older_than_seconds
-        cur = self.conn.execute(
-            """
-            UPDATE videos
-            SET status='pending'
-            WHERE status='failed'
-              AND source_id=?
-              AND (last_attempt_ts IS NULL OR last_attempt_ts < ?)
-            """,
-            (source_id, cutoff),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
-
-class PendingSelector:
-    def __init__(self, store: Store) -> None:
-        self.store = store
-
-    def has_pending(self) -> bool:
-        return self.store.count_pending() > 0
-
-    def list_pending(self, limit: int = 200) -> list[tuple]:
-        return self.store.list_pending(limit=limit)
-
-    def next_eligible(self, now_ts: int) -> Optional[dict]:
-        max_per_day_per_source = self.store.get_daily_source_limit()
-        return self.store.next_pending_eligible(now_ts, max_per_day_per_source)
-
-    def daily_counts(self, now_ts: int) -> dict[int, int]:
-        return self.store.count_posted_by_source_since(now_ts - 86400)
-
-
-class RateLimiter:
-    def __init__(self, store: Store, now_ts: int) -> None:
-        self.store = store
-        self.now_ts = now_ts
-        self.min_interval, self.max_per_hour = store.get_publish_limits()
-        self.max_per_day_per_source = store.get_daily_source_limit()
-
-    def wait_interval(self) -> int:
-        last_posted = self.store.last_posted_ts() or 0
-        if not last_posted:
-            return 0
-        return max(0, self.min_interval - (self.now_ts - last_posted))
-
-    def wait_hourly(self) -> int:
-        posted_last_hour = self.store.count_posted_since(self.now_ts - 3600)
-        if posted_last_hour >= self.max_per_hour:
-            oldest = self.store.oldest_posted_since(self.now_ts - 3600)
-            if oldest:
-                return max(0, 3600 - (self.now_ts - oldest))
-        return 0
-
-    def wait_daily_for_source(self, source_id: Optional[int]) -> int:
-        if source_id is None or self.max_per_day_per_source <= 0:
-            return 0
-        posted_last_day = self.store.count_posted_since_for_source(source_id, self.now_ts - 86400)
-        if posted_last_day >= self.max_per_day_per_source:
-            oldest = self.store.oldest_posted_since_for_source(source_id, self.now_ts - 86400)
-            if oldest:
-                return max(0, 86400 - (self.now_ts - oldest))
-        return 0
-
-    def wait_daily_for_any(self, source_ids: list[int]) -> int:
-        if self.max_per_day_per_source <= 0:
-            return 0
-        if not source_ids:
-            return 0
-        counts = self.store.count_posted_by_source_since(self.now_ts - 86400)
-        waits = []
-        for sid in source_ids:
-            if int(counts.get(int(sid), 0)) >= self.max_per_day_per_source:
-                oldest = self.store.oldest_posted_since_for_source(int(sid), self.now_ts - 86400)
-                if oldest:
-                    waits.append(max(0, 86400 - (self.now_ts - oldest)))
-        return min(waits) if waits else 0
-
-    def next_wait(self, pending_source_id: Optional[int]) -> int:
-        return max(self.wait_interval(), self.wait_hourly(), self.wait_daily_for_source(pending_source_id))
-
-
-@dataclass
-class DashboardMetrics:
-    relays: int
-    sources: int
-    pending: int
-    posted: int
-    failed: int
-    last_poll_ts: Optional[int]
-    last_posted_ts: Optional[int]
-    min_interval: int
-    max_per_hour: int
-    max_per_day_per_source: int
-    has_nsec: bool
-    status: str
-    now_ts: int
-    next_post: str
-
-    @classmethod
-    def from_store(cls, store: Store, db_path: str) -> "DashboardMetrics":
-        now_ts = int(time.time())
-        min_interval, max_per_hour = store.get_publish_limits()
-        max_per_day_per_source = store.get_daily_source_limit()
-        return cls(
-            relays=store.count_relays(),
-            sources=store.count_sources(),
-            pending=store.count_pending(),
-            posted=store.count_posted(),
-            failed=store.count_failed(),
-            last_poll_ts=store.last_polled_ts(),
-            last_posted_ts=store.last_posted_ts(),
-            min_interval=min_interval,
-            max_per_hour=max_per_hour,
-            max_per_day_per_source=max_per_day_per_source,
-            has_nsec=bool(get_stored_nsec(db_path)),
-            status=_get_runtime_status() or "idle",
-            now_ts=now_ts,
-            next_post=_estimate_next_post(store, db_path),
-        )
-
-    def poll_age(self) -> str:
-        return f"{self.now_ts - self.last_poll_ts}s ago" if self.last_poll_ts else "never"
-
-    def post_age(self) -> str:
-        return f"{self.now_ts - self.last_posted_ts}s ago" if self.last_posted_ts else "never"
-
-    def status_toolbar(self) -> str:
-        nsec_txt = "nsec:yes" if self.has_nsec else "nsec:no"
-        status_txt = f" status:{self.status}" if self.status else ""
-        return (
-            f" relays:{self.relays} sources:{self.sources} pending:{self.pending} "
-            f"posted:{self.posted} failed:{self.failed} {nsec_txt}{status_txt} "
-        )
-
-    def dashboard_lines(self) -> list[str]:
-        return [
-            "Dashboard:",
-            f"  Relays: {self.relays}",
-            f"  Sources: {self.sources}",
-            f"  Pending: {self.pending}",
-            f"  Posted: {self.posted}",
-            f"  Failed: {self.failed}",
-            f"  Last poll: {self.poll_age()}",
-            f"  Last post: {self.post_age()}",
-            f"  Rate: min_interval={self.min_interval}s, max_per_hour={self.max_per_hour}",
-            f"  Nsec set: {'yes' if self.has_nsec else 'no'}",
-            f"  Status: {self.status}",
-            "  Hint: type '/' to open the command palette",
-        ]
-
-    def counts_block(self) -> str:
-        return "\n".join(
-            [
-                "Counts",
-                f"Relays:   {self.relays}",
-                f"Sources:  {self.sources}",
-                f"Pending:  {self.pending}",
-                f"Posted:   {self.posted}",
-                f"Failed:   {self.failed}",
-            ]
-        )
-
-    def activity_block(self) -> str:
-        return "\n".join(
-            [
-                "Activity",
-                f"Last poll: {self.poll_age()}",
-                f"Last post: {self.post_age()}",
-                f"Status:    {self.status}",
-                f"Next post: {self.next_post}",
-                f"Nsec set:  {'yes' if self.has_nsec else 'no'}",
-            ]
-        )
-
-    def rate_block(self) -> str:
-        return "\n".join(
-            [
-                "Rate Limits",
-                f"Min interval: {self.min_interval}s",
-                f"Max/hour:     {self.max_per_hour}",
-                f"Max/day/src:  {self.max_per_day_per_source}",
-            ]
-        )
-
-
-class IngestPipeline:
-    def __init__(self, store: Store, pt: "PeerTubeClient", n: UrlNormaliser, log_fn: callable) -> None:
-        self.store = store
-        self.pt = pt
-        self.n = n
-        self.log_fn = log_fn
-
-    def ingest_entries(
-        self,
-        source_id: int,
-        entries: list[dict],
-        entry_key_fn: callable,
-        watch_url_fn: callable,
-        title_fn: callable,
-        summary_fn: callable,
-        published_ts_fn: callable,
-        cutoff_ts: Optional[int],
-        channel_url_fallback: Optional[str],
-    ) -> tuple[int, int]:
-        inserted = 0
-        skipped = 0
-        for entry in entries:
-            entry_key = str(entry_key_fn(entry) or "")
-            if not entry_key:
-                continue
-            watch_url = watch_url_fn(entry)
-            if not watch_url:
-                continue
-            if self.store.video_exists(source_id, entry_key):
-                published_ts = published_ts_fn(entry)
-                if published_ts:
-                    self.store.update_published_ts_if_null(source_id, entry_key, published_ts)
-                continue
-            if cutoff_ts:
-                published_ts = published_ts_fn(entry)
-                if published_ts and published_ts < cutoff_ts:
-                    skipped += 1
-                    continue
-            published_ts = published_ts_fn(entry)
-
-            title = title_fn(entry)
-            summary = summary_fn(entry)
-
-            base, v_api_id, mp4, hls, dur, w, h, instance, ch_name, ch_url, acc_name, acc_url, api_title, api_desc, thumb = self.pt.enrich_video(watch_url)
-            if api_title:
-                title = api_title
-            if api_desc:
-                summary = api_desc
-
-            item = IngestedItem(
-                source_id=source_id,
-                entry_key=entry_key,
-                watch_url=watch_url,
-                title=title,
-                summary=summary,
-                peertube_base=base,
-                peertube_video_id=str(v_api_id) if v_api_id else None,
-                hls_url=hls,
-                mp4_url=mp4,
-                peertube_instance=instance,
-                channel_name=ch_name,
-                channel_url=ch_url or channel_url_fallback,
-                account_name=acc_name,
-                account_url=acc_url,
-                published_ts=published_ts,
-                thumbnail_url=thumb,
-                duration=dur,
-                width=w,
-                height=h,
-            )
-            self.store.insert_pending(item)
-            inserted += 1
-        return inserted, skipped
-
-
-class PeerTubeClient:
-    def __init__(self, n: UrlNormaliser) -> None:
-        self.n = n
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "peertube-nostr-publisher/0.1"})
-
-    def _get_json(self, url: str, params: Optional[dict] = None, timeout: int = 15) -> Optional[dict]:
-        try:
-            r = self.session.get(url, params=params, timeout=timeout)
-            r.raise_for_status()
-            return r.json()
-        except Exception:
-            return None
-
-    def list_channel_videos(self, api_base: str, channel: str, limit: int = 50) -> Optional[List[Dict[str, Any]]]:
-        """
-        Primary listing: API channel videos.
-        Endpoint: /api/v1/video-channels/{channel}/videos
-        Returns list of video objects (dicts) or None on failure.
-        """
-        base = self.n.normalise_http_url(api_base)
-        url = f"{base}/api/v1/video-channels/{channel}/videos"
-
-        # per PeerTube API: common params include start/count/sort
-        # Best-effort across instances:
-        params_variants = [
-            {"start": 0, "count": min(limit, 100), "sort": "-publishedAt"},
-            {"start": 0, "count": min(limit, 100), "sort": "-createdAt"},
-            {"start": 0, "count": min(limit, 100)},
-        ]
-        for params in params_variants:
-            data = self._get_json(url, params=params)
-            if isinstance(data, dict) and isinstance(data.get("data"), list):
-                return data["data"]
-        return None
-
-    def parse_rss(self, rss_url: str) -> List[dict]:
-        d = feedparser.parse(rss_url)
-        entries = d.entries or []
-        # oldest first for stable inserts
-        return list(reversed(entries))
-
-    def enrich_video(self, watch_url: str) -> tuple:
-        """
-        Given a watch URL, call /api/v1/videos/{id} and extract:
-          base, video_id, mp4_url, hls_url, duration, width, height,
-          instance, channel_name, channel_url, account_name, account_url,
-          api_title, api_desc, thumbnail_url
-        """
-        x = self.n.extract_watch_id(watch_url)
-        if not x:
-            return (None,) * 15
-
-        base, vid = x
-        v = self._get_json(f"{base}/api/v1/videos/{vid}")
-        if not isinstance(v, dict):
-            return (base, vid) + (None,) * 13
-
-        hls = self._pick_hls_url(v)
-        mp4, w, h = self._pick_best_mp4(v)
-        duration = v.get("duration")
-        instance, channel_name, channel_url, account_name, account_url = self._extract_attribution(base, v)
-        api_title = (v.get("name") or "").strip() or None
-        api_desc = (v.get("description") or "").strip() or None
-        thumb = v.get("thumbnailPath")
-        if thumb and not thumb.startswith("http"):
-            thumb = f"{base}{thumb}"
-        return base, vid, mp4, hls, duration, w, h, instance, channel_name, channel_url, account_name, account_url, api_title, api_desc, thumb
-
-    @staticmethod
-    def _pick_hls_url(v: dict) -> Optional[str]:
-        sp = v.get("streamingPlaylists") or []
-        for playlist in sp:
-            for key in ("playlistUrl", "hlsUrl", "url"):
-                val = playlist.get(key)
-                if isinstance(val, str) and val.startswith("http") and val.endswith(".m3u8"):
-                    return val
-
-            files = playlist.get("files") or []
-            for f in files:
-                fu = f.get("fileUrl") or f.get("url")
-                if isinstance(fu, str) and fu.startswith("http"):
-                    if fu.endswith(".m3u8"):
-                        return fu
-                    if fu.endswith("-fragmented.mp4"):
-                        return fu.replace("-fragmented.mp4", ".m3u8")
-        return None
-
-    @staticmethod
-    def _pick_best_mp4(v: dict) -> tuple[Optional[str], Optional[int], Optional[int]]:
-        candidates = []
-
-        def consider_file(f: dict) -> None:
-            fu = f.get("fileUrl") or f.get("url")
-            if not (isinstance(fu, str) and fu.startswith("http")):
-                return
-            mt = (f.get("mimeType") or "").lower()
-            if "mp4" not in mt and not fu.lower().endswith(".mp4"):
-                return
-            size = int(f.get("size") or 0)
-            res = f.get("resolution") or {}
-            height = int(res.get("height") or 0)
-            width = int(res.get("width") or 0)
-            candidates.append((height, width, size, fu))
-
-        for f in (v.get("files") or []):
-            consider_file(f)
-        for pl in (v.get("streamingPlaylists") or []):
-            for f in (pl.get("files") or []):
-                consider_file(f)
-
-        if not candidates:
-            return (None, None, None)
-        with_height = [c for c in candidates if c[0] > 0]
-        if with_height:
-            under = [c for c in with_height if c[0] <= 720]
-            if under:
-                under.sort(reverse=True, key=lambda x: (x[0], x[2]))
-                _, w, _, url = under[0]
-                return (url, w, under[0][0])
-            over = sorted(with_height, key=lambda x: (x[0], x[2]))
-            return (over[0][3], over[0][1], over[0][0])
-        candidates.sort(reverse=True, key=lambda x: x[2])
-        return (candidates[0][3], candidates[0][1], candidates[0][0])
-
-    @staticmethod
-    def _extract_attribution(base: str, v: dict) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
-        instance = base
-        ch = v.get("channel") or {}
-        acc = v.get("account") or {}
-
-        channel_name = ch.get("displayName") or ch.get("name") or ch.get("preferredUsername") or None
-        channel_url = ch.get("url") or ch.get("href") or None
-        if not channel_url and ch.get("name"):
-            channel_url = f"{base}/c/{ch.get('name')}"
-
-        account_name = acc.get("displayName") or acc.get("name") or acc.get("preferredUsername") or None
-        account_url = acc.get("url") or acc.get("href") or None
-        if not account_url and acc.get("name"):
-            account_url = f"{base}/a/{acc.get('name')}"
-
-        return instance, channel_name, channel_url, account_name, account_url
-
-
-class NostrPublisher:
-    @staticmethod
-    def _build_content(p: dict) -> str:
-        return (p.get("summary") or "").strip()
-
-    @staticmethod
-    def _build_tags(p: dict) -> tuple[int, list[list[str]]]:
-        title = (p.get("title") or "").strip()
-        author = (p.get("channel_name") or p.get("account_name") or "unknown").strip()
-        mp4 = p.get("direct_url")
-        hls = p.get("hls_url")
-        thumb = p.get("thumbnail_url")
-        duration = p.get("duration")
-        w = p.get("width")
-        h = p.get("height")
-        watch_url = p.get("watch_url")
-        channel_url = p.get("channel_url")
-        published_ts = p.get("published_ts")
-        peertube_instance = p.get("peertube_instance")
-        peertube_video_id = p.get("peertube_video_id")
-
-        kind = 22 if (h and w and h > w) else 21
-
-        tags: list[list[str]] = []
-
-        if title:
-            tags.append(["title", title])
-        if published_ts:
-            tags.append(["published_at", str(published_ts)])
-
-        def add_imeta(url: str, mime: str) -> None:
-            imeta = ["imeta", f"url {url}", f"m {mime}"]
-            if thumb:
-                imeta.append(f"image {thumb}")
-            if duration:
-                imeta.append(f"duration {duration}")
-            if w and h:
-                imeta.append(f"dim {w}x{h}")
-            tags.append(imeta)
-
-        if mp4:
-            add_imeta(str(mp4), "video/mp4")
-        if hls:
-            add_imeta(str(hls), "application/x-mpegURL")
-
-        tags.append(["t", "video"])
-        tags.append(["t", "peertube"])
-        if watch_url:
-            tags.append(["r", str(watch_url)])
-        if channel_url:
-            tags.append(["r", str(channel_url)])
-        if title and author:
-            tags.append(["alt", f"PeerTube video: {title} by {author}"])
-        if peertube_video_id and watch_url:
-            tags.append(["origin", "peertube", str(peertube_video_id), str(watch_url)])
-        if peertube_instance:
-            tags.append(["peertube:instance", str(peertube_instance)])
-
-        return kind, tags
-
-    @staticmethod
-    def publish(nsec: str, relays: list[str], content: str, kind: int, tags: list[list[str]]) -> str:
-        priv = PrivateKey.from_nsec(nsec)
-        pub_hex = priv.public_key.hex()
-        try:
-            ev = Event(kind=kind, public_key=pub_hex, content=content, tags=tags)
-        except TypeError:
-            try:
-                ev = Event(kind=kind, pubkey=pub_hex, content=content, tags=tags)
-            except TypeError:
-                ev = Event(content=content, kind=kind, tags=tags)
-                if hasattr(ev, "pub_key"):
-                    setattr(ev, "pub_key", pub_hex)
-                elif hasattr(ev, "public_key"):
-                    setattr(ev, "public_key", pub_hex)
-        if hasattr(priv, "sign_event"):
-            priv.sign_event(ev)
-        elif hasattr(ev, "sign"):
-            try:
-                ev.sign(priv)
-            except TypeError:
-                priv_hex = _privkey_to_hex(priv)
-                if not priv_hex:
-                    raise
-                ev.sign(priv_hex)
-        else:
-            raise RuntimeError("Unable to sign event with current pynostr version.")
-
-        rm = RelayManager(timeout=6)
-        for r in relays:
-            rm.add_relay(r)
-        rm.publish_event(ev)
-        rm.run_sync()
-        return ev.id
-
-
-class Runner:
-    def __init__(
-        self,
-        store: Store,
-        pt: PeerTubeClient,
-        pub: NostrPublisher,
-        n: UrlNormaliser,
-        log_fn: Optional[callable] = None,
-        status_fn: Optional[callable] = None,
-        dry_run: bool = False,
-    ) -> None:
-        self.store = store
-        self.pt = pt
-        self.pub = pub
-        self.n = n
-        self.log_fn = log_fn
-        self.status_fn = status_fn
-        self.dry_run = dry_run
-        self.ingest = IngestPipeline(store, pt, n, self._log)
-
-    def _log(self, msg: str) -> None:
-        if self.log_fn:
-            self.log_fn(msg)
-        else:
-            print(msg)
-
-    def _status(self, msg: str) -> None:
-        if self.status_fn:
-            self.status_fn(msg)
-
-    def ingest_sources_once(self, api_limit_per_source: int, new_source_lookback_days: int) -> None:
-        sources = self.store.get_enabled_sources()
-        for s in sources:
-            self._ingest_source(s, api_limit_per_source, new_source_lookback_days)
-
-    def ingest_source_once(self, source_id: int, api_limit_per_source: int, new_source_lookback_days: int) -> None:
-        s = self.store.get_source_by_id(source_id)
-        if not s:
-            self._log(f"Source id {source_id} not found.")
-            return
-        if s.get("enabled") != 1:
-            self._log(f"Source id {source_id} is disabled.")
-            return
-        self._ingest_source(s, api_limit_per_source, new_source_lookback_days)
-
-    def _ingest_source(self, s: dict, api_limit_per_source: int, new_source_lookback_days: int) -> None:
-        sid = s["id"]
-        api_base = s.get("api_base")
-        api_channel = s.get("api_channel")
-        rss_url = s.get("rss_url")
-        last_polled_ts = s.get("last_polled_ts")
-        lookback_days = s.get("lookback_days")
-        cutoff_ts = None
-        if not last_polled_ts:
-            effective_lookback = lookback_days if lookback_days is not None else new_source_lookback_days
-            if effective_lookback and effective_lookback > 0:
-                cutoff_ts = self.n.now_ts() - (effective_lookback * 86400)
-
-        inserted = 0
-        skipped = 0
-        err: Optional[str] = None
-
-        # 1) API primary
-        if api_base and api_channel:
-            vids = self.pt.list_channel_videos(api_base=api_base, channel=api_channel, limit=api_limit_per_source)
-            if vids is not None:
-                # PeerTube API is usually newest first; we insert oldest-first for stability
-                entries = list(reversed(vids))
-
-                def api_entry_key(v: dict) -> Optional[str]:
-                    return v.get("uuid") or v.get("shortUUID") or v.get("id") or v.get("url")
-
-                def api_watch_url(v: dict) -> str:
-                    watch_url = v.get("url")
-                    if isinstance(watch_url, str) and watch_url.startswith("http"):
-                        return watch_url
-                    vid_id = v.get("uuid") or v.get("shortUUID") or v.get("id")
-                    if isinstance(vid_id, (str, int)) and api_base:
-                        return f"{self.n.normalise_http_url(api_base)}/w/{vid_id}"
-                    return ""
-
-                inserted, skipped = self.ingest.ingest_entries(
-                    source_id=sid,
-                    entries=entries,
-                    entry_key_fn=api_entry_key,
-                    watch_url_fn=api_watch_url,
-                    title_fn=lambda v: (v.get("name") or v.get("title") or "").strip(),
-                    summary_fn=lambda v: (v.get("description") or "").strip(),
-                    published_ts_fn=self._api_entry_ts,
-                    cutoff_ts=cutoff_ts,
-                    channel_url_fallback=s.get("api_channel_url"),
-                )
-
-                self.store.mark_source_polled(sid, None)
-                if inserted:
-                    self._log(f"[source {sid}] API new items: {inserted}")
-                if skipped:
-                    self._log(f"[source {sid}] API skipped old items: {skipped}")
-                return  # API succeeded, no need RSS fallback
-
-            # if API configured but failed, capture error and fall through to RSS
-            err = "API listing failed; trying RSS fallback"
-
-        # 2) RSS fallback
-        if rss_url:
-            try:
-                entries = self.pt.parse_rss(rss_url)
-                inserted, skipped = self.ingest.ingest_entries(
-                    source_id=sid,
-                    entries=entries,
-                    entry_key_fn=self._rss_entry_key,
-                    watch_url_fn=lambda e: (e.get("link") or "").strip(),
-                    title_fn=lambda e: (e.get("title") or "").strip(),
-                    summary_fn=lambda e: (e.get("summary") or "").strip(),
-                    published_ts_fn=self._rss_entry_ts,
-                    cutoff_ts=cutoff_ts,
-                    channel_url_fallback=None,
-                )
-
-                self.store.mark_source_polled(sid, None if not err else err)
-                if inserted:
-                    self._log(f"[source {sid}] RSS new items: {inserted}")
-                if skipped:
-                    self._log(f"[source {sid}] RSS skipped old items: {skipped}")
-            except Exception as ex:
-                self.store.mark_source_polled(sid, f"{err + '; ' if err else ''}RSS failed: {ex}")
-                self._log(f"[source {sid}] RSS error: {ex}")
-        else:
-            self.store.mark_source_polled(sid, err or "No RSS fallback configured and API listing failed/unconfigured")
-
-    @staticmethod
-    def _rss_entry_key(e: dict) -> str:
-        for k in ("id", "guid", "link"):
-            v = e.get(k)
-            if v:
-                return str(v)
-        return str(hash(repr(sorted(e.items()))))
-
-    @staticmethod
-    def _api_entry_ts(v: dict) -> Optional[int]:
-        val = v.get("publishedAt") or v.get("createdAt")
-        return _parse_any_timestamp(val)
-
-    @staticmethod
-    def _rss_entry_ts(e: dict) -> Optional[int]:
-        for k in ("published_parsed", "updated_parsed"):
-            val = e.get(k)
-            if val:
-                try:
-                    return int(calendar.timegm(val))
-                except Exception:
-                    continue
-        for k in ("published", "updated"):
-            val = e.get(k)
-            ts = _parse_any_timestamp(val)
-            if ts:
-                return ts
-        return None
-
-    def publish_one_pending(self, nsec: str, relays: list[str], pending: Optional[dict] = None) -> None:
-        if pending is None:
-            pending = self.store.next_pending()
-        if not pending:
-            return
-
-        content = self.pub._build_content(pending)
-        kind, tags = self.pub._build_tags(pending)
-
-        if self.dry_run:
-            self._log(f"[DRY-RUN] Would publish: {pending.get('title') or pending.get('watch_url')}")
-            self._log(f"[DRY-RUN] Content:\n{content}")
-            self._log(f"[DRY-RUN] Tags: {tags}")
-            self._log(f"[DRY-RUN] Relays: {relays}")
-            return
-
-        try:
-            eid = self.pub.publish(nsec=nsec, relays=relays, content=content, kind=kind, tags=tags)
-            self.store.mark_posted(pending["id"], eid)
-            for r in relays:
-                self.store.mark_relay_used(r, None)
-            self._log(f"Published {eid} | {pending.get('title') or pending.get('watch_url')}")
-        except Exception as ex:
-            self.store.mark_failed(pending["id"], str(ex))
-            for r in relays:
-                self.store.mark_relay_used(r, str(ex))
-            self._log(f"Publish failed: {ex}")
-
-    def run(
-        self,
-        nsec: Optional[str],
-        relays: Optional[list[str]],
-        poll_seconds: int,
-        publish_interval_seconds: int,
-        retry_failed_after_seconds: Optional[int],
-        api_limit_per_source: int,
-        new_source_lookback_days: int,
-        stop_event: Optional[threading.Event] = None,
-    ) -> None:
-        dynamic_nsec = nsec is None
-        dynamic_relays = relays is None
-        last_relays: Optional[list[str]] = None
-        last_nsec_set: Optional[bool] = None
-
-        self._log(f"Poll: {poll_seconds}s | Publish spacing: {publish_interval_seconds}s | API limit/source: {api_limit_per_source}")
-
-        last_retry_check = 0
-        selector = PendingSelector(self.store)
-
-        while True:
-            try:
-                if stop_event and stop_event.is_set():
-                    self._log("Stopped.")
-                    return
-
-                self._status("Fetching feeds")
-                if dynamic_relays:
-                    relays = self.store.get_enabled_relays() or DEFAULT_RELAYS
-                if relays != last_relays:
-                    self._log(f"Relays: {', '.join(relays or [])}")
-                    last_relays = list(relays or [])
-
-                if dynamic_nsec:
-                    nsec = get_stored_nsec(self.store.db_path)
-                nsec_set = bool(nsec)
-                if last_nsec_set is None or nsec_set != last_nsec_set:
-                    if nsec_set:
-                        self._log("Nsec available for publishing.")
-                    else:
-                        self._log("No nsec set; publishing paused.")
-                    last_nsec_set = nsec_set
-
-                now = self.n.now_ts()
-                if retry_failed_after_seconds is not None:
-                    if last_retry_check == 0 or (now - last_retry_check) >= 60:
-                        n = self.store.retry_failed(retry_failed_after_seconds)
-                        if n:
-                            self._log(f"Re-queued failed items for retry: {n}")
-                        last_retry_check = now
-
-                self.ingest_sources_once(
-                    api_limit_per_source=api_limit_per_source,
-                    new_source_lookback_days=new_source_lookback_days,
-                )
-
-                # publish at most one per loop iteration
-                if nsec:
-                    now_ts = self.n.now_ts()
-                    rate = RateLimiter(self.store, now_ts)
-                    pending = selector.next_eligible(now_ts)
-                    if pending is not None:
-                        wait = rate.next_wait(int(pending["source_id"]))
-                        if wait > 0:
-                            self._status("Rate limited")
-                        else:
-                            self._status("Publishing")
-                            self.publish_one_pending(nsec=nsec, relays=relays or [], pending=pending)
-                            self._status("Idle")
-                    else:
-                        if selector.has_pending():
-                            rows = selector.list_pending(limit=200)
-                            source_ids = sorted({int(r[1]) for r in rows})
-                            wait = max(rate.wait_interval(), rate.wait_hourly(), rate.wait_daily_for_any(source_ids))
-                            if wait > 0:
-                                self._status("Rate limited")
-                            else:
-                                self._status("Idle")
-                        else:
-                            self._status("Idle")
-                else:
-                    self._status("Idle")
-
-                if not _sleep_interruptible(publish_interval_seconds, stop_event):
-                    self._log("Stopped.")
-                    return
-                self._status("Sleeping")
-                if not _sleep_interruptible(poll_seconds, stop_event):
-                    self._log("Stopped.")
-                    return
-                self._status("Idle")
-            except KeyboardInterrupt:
-                self._log("\nStopped.")
-                return
-            except Exception as ex:
-                self._log(f"Loop error: {ex}")
-                _sleep_interruptible(poll_seconds, stop_event)
-
-
-def _format_table(headers: list[str], rows: list[list[str]], col_sep: str = "  ") -> list[str]:
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, val in enumerate(row):
-            if i < len(widths):
-                widths[i] = max(widths[i], len(val))
-    out: list[str] = []
-    header = col_sep.join(h.ljust(widths[i]) for i, h in enumerate(headers))
-    out.append(header)
-    out.append("-" * len(header))
-    for row in rows:
-        padded = []
-        for i, val in enumerate(row):
-            if i < len(widths):
-                padded.append(val.ljust(widths[i]))
-        out.append(col_sep.join(padded))
-    return out
-
+from core.database import Store, get_stored_nsec, set_stored_nsec, clear_stored_nsec
+from core.peertube import PeerTubeClient
+from core.nostr import NostrPublisher
+from core.runner import Runner, RateLimiter, PendingSelector, _get_runtime_status, _set_runtime_status
+from core.utils import UrlNormaliser, DEFAULT_RELAYS, _parse_any_timestamp, _format_table, _sleep_interruptible
+from core.models import DashboardMetrics
+
+
+# ---------------------------------------------------------------------------
+# CLI definitions
+# ---------------------------------------------------------------------------
 
 def parse_cli() -> argparse.Namespace:
     argv = sys.argv[1:]
@@ -1934,19 +176,19 @@ def parse_cli() -> argparse.Namespace:
     s.set_defaults(cmd="run")
 
     s = sub.add_parser("interactive", help="Run with an interactive CLI to manage sources/relays/nsec")
-    s.add_argument("--nsec", default=None, help="nsec signing key (or set NOSTR_NSEC)")
-    s.add_argument("--relays", default=None, help="Comma-separated relay URLs (overrides DB if provided)")
+    s.add_argument("--nsec", default=None)
+    s.add_argument("--relays", default=None)
     s.add_argument("--poll-seconds", type=int, default=int(os.environ.get("POLL_SECONDS", "300")))
     s.add_argument("--publish-interval-seconds", type=int, default=int(os.environ.get("PUBLISH_INTERVAL_SECONDS", "10")))
     s.add_argument("--retry-failed-after-seconds", type=int, default=int(os.environ.get("RETRY_FAILED_AFTER_SECONDS", "3600")))
     s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
     s.add_argument("--new-source-lookback-days", type=int, default=int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30")))
-    s.add_argument("--dry-run", action="store_true", help="Preview what would be published without sending to relays")
+    s.add_argument("--dry-run", action="store_true")
     s.set_defaults(cmd="interactive")
 
     s = sub.add_parser("sync-profile", help="Sync profile metadata + NIP-65 relay list from relays")
-    s.add_argument("--nsec", default=None, help="nsec signing key (or set NOSTR_NSEC)")
-    s.add_argument("--relays", default=None, help="Comma-separated relay URLs (overrides DB if provided)")
+    s.add_argument("--nsec", default=None)
+    s.add_argument("--relays", default=None)
     s.add_argument("--import-relays", action="store_true", help="Import NIP-65 relays into DB")
     s.add_argument("--enable-imported", action="store_true", help="Enable imported relays (default: disabled)")
     s.add_argument("--disable-missing", action="store_true", help="Disable DB relays not present in NIP-65 list")
@@ -1956,7 +198,7 @@ def parse_cli() -> argparse.Namespace:
     s = sub.add_parser("refresh", help="Ingest sources once (manual refresh)")
     s.add_argument("--api-limit-per-source", type=int, default=int(os.environ.get("API_LIMIT_PER_SOURCE", "50")))
     s.add_argument("--new-source-lookback-days", type=int, default=int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30")))
-    s.add_argument("--dry-run", action="store_true", help="Preview what would be published without sending to relays")
+    s.add_argument("--dry-run", action="store_true")
     s.set_defaults(cmd="refresh")
 
     s = sub.add_parser("repair-db", help="Repair/normalise DB fields after updates")
@@ -2134,7 +376,7 @@ def main() -> None:
                 print("No relays.")
                 return
             table_rows: list[list[str]] = []
-            for (rid, enabled, url, url_norm, last_used_ts, last_error) in rows:
+            for (rid, enabled, url, url_norm, last_used_ts, last_error, _latency_ms) in rows:
                 lu = str(last_used_ts) if last_used_ts else "-"
                 le = (last_error or "").replace("\n", " ")
                 if len(le) > 80:
@@ -2210,8 +452,8 @@ def main() -> None:
         if args.cmd == "refresh":
             runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n, dry_run=args.dry_run)
             runner.ingest_sources_once(
-                api_limit_per_source=args.api_limit_per_source,
-                new_source_lookback_days=args.new_source_lookback_days,
+                api_limit=args.api_limit_per_source,
+                lookback_days=args.new_source_lookback_days,
             )
             return
 
@@ -2323,6 +565,10 @@ def main() -> None:
         store.close()
 
 
+# ---------------------------------------------------------------------------
+# Interactive shell (prompt_toolkit-based)
+# ---------------------------------------------------------------------------
+
 def _interactive_shell(db_path: str, n: UrlNormaliser, stop_event: threading.Event) -> None:
     store = Store(db_path, n)
     store.init_schema()
@@ -2332,7 +578,7 @@ def _interactive_shell(db_path: str, n: UrlNormaliser, stop_event: threading.Eve
     def _relay_tokens() -> list[str]:
         rows = store.list_relays()
         out: list[str] = []
-        for (rid, _enabled, url, _url_norm, _last_used_ts, _last_error) in rows:
+        for (rid, _enabled, url, _url_norm, _last_used_ts, _last_error, _latency_ms) in rows:
             out.append(str(rid))
             if url:
                 out.append(str(url))
@@ -2665,6 +911,13 @@ def _help_lines() -> list[str]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Command registry (interactive dispatch)
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass
+
+
 @dataclass
 class CommandContext:
     store: Store
@@ -2826,7 +1079,7 @@ def _cmd_list_relays(ctx: CommandContext, _args: list[str]) -> bool:
         ctx.log_fn("No relays.")
     else:
         table_rows: list[list[str]] = []
-        for (rid, enabled, url, url_norm, last_used_ts, last_error) in rows:
+        for (rid, enabled, url, url_norm, last_used_ts, last_error, _latency_ms) in rows:
             lu = str(last_used_ts) if last_used_ts else "-"
             le = (last_error or "").replace("\n", " ")
             if len(le) > 80:
@@ -3051,18 +1304,6 @@ def _interactive_dashboard(store: Store, db_path: str) -> str:
     return "\n".join(metrics.dashboard_lines())
 
 
-_RUNTIME_STATUS = ""
-
-
-def _set_runtime_status(value: str) -> None:
-    global _RUNTIME_STATUS
-    _RUNTIME_STATUS = value
-
-
-def _get_runtime_status() -> str:
-    return _RUNTIME_STATUS
-
-
 def _format_dashboard_panels(store: Store, db_path: str) -> dict[str, str]:
     metrics = DashboardMetrics.from_store(store, db_path)
     counts = metrics.counts_block()
@@ -3102,138 +1343,9 @@ def _format_dashboard_panels(store: Store, db_path: str) -> dict[str, str]:
     return {"counts": counts, "activity": activity, "rate": rate, "queue": pending_lines}
 
 
-def _estimate_next_post(store: Store, db_path: str) -> str:
-    if store.count_pending() == 0:
-        return "none"
-    if not get_stored_nsec(db_path):
-        return "nsec missing"
-    now_ts = int(time.time())
-    selector = PendingSelector(store)
-    rate = RateLimiter(store, now_ts)
-    pending = selector.next_eligible(now_ts)
-    wait = rate.next_wait(int(pending["source_id"])) if pending else 0
-    if pending is None and selector.has_pending():
-        rows = selector.list_pending(limit=200)
-        source_ids = sorted({int(r[1]) for r in rows})
-        wait = max(wait, rate.wait_interval(), rate.wait_hourly(), rate.wait_daily_for_any(source_ids))
-    if wait == 0:
-        return "now"
-    return f"in {wait}s"
-
-
-def _sleep_interruptible(seconds: int, stop_event: Optional[threading.Event]) -> bool:
-    if seconds <= 0:
-        return True
-    if stop_event is None:
-        time.sleep(seconds)
-        return True
-    end = time.time() + seconds
-    while time.time() < end:
-        if stop_event.is_set():
-            return False
-        time.sleep(0.2)
-    return True
-
-
-def _parse_any_timestamp(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        try:
-            if raw.endswith("Z"):
-                raw = raw[:-1] + "+00:00"
-            dt = datetime.fromisoformat(raw)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return int(dt.timestamp())
-        except Exception:
-            try:
-                dt = parsedate_to_datetime(raw)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return int(dt.timestamp())
-            except Exception:
-                return None
-    return None
-
-
-def _parse_sync_profile_args(args: list[str]) -> argparse.Namespace | str:
-    p = argparse.ArgumentParser(prog="sync-profile", add_help=False)
-    p.add_argument("--nsec", default=None)
-    p.add_argument("--relays", default=None)
-    p.add_argument("--import-relays", action="store_true")
-    p.add_argument("--enable-imported", action="store_true")
-    p.add_argument("--disable-missing", action="store_true")
-    p.add_argument("--timeout-seconds", type=int, default=8)
-    try:
-        return p.parse_args(args)
-    except SystemExit:
-        return "Usage: sync-profile [--relays a,b] [--nsec nsec] [--import-relays] [--enable-imported] [--disable-missing] [--timeout-seconds N]"
-
-
-def _parse_edit_source_args(args: list[str]) -> argparse.Namespace | str:
-    p = argparse.ArgumentParser(prog="edit-source", add_help=False)
-    p.add_argument("source_id")
-    p.add_argument("--channel-url", dest="channel_url", default=None)
-    p.add_argument("--rss-url", dest="rss_url", default=None)
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        return "Usage: edit-source <id> [--channel-url URL] [--rss-url URL]"
-    if not ns.channel_url and not ns.rss_url:
-        return "Provide --channel-url and/or --rss-url."
-    return ns
-
-
-def _parse_set_rate_args(args: list[str]) -> argparse.Namespace | str:
-    p = argparse.ArgumentParser(prog="set-rate", add_help=False)
-    p.add_argument("--min-interval-seconds", type=int, default=None)
-    p.add_argument("--max-posts-per-hour", type=int, default=None)
-    p.add_argument("--max-posts-per-day-per-source", type=int, default=None)
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        return "Usage: set-rate [--min-interval-seconds N] [--max-posts-per-hour N] [--max-posts-per-day-per-source N]"
-    if ns.min_interval_seconds is None and ns.max_posts_per_hour is None and ns.max_posts_per_day_per_source is None:
-        return "Provide --min-interval-seconds and/or --max-posts-per-hour and/or --max-posts-per-day-per-source."
-    return ns
-
-
-def _maybe_add_url_as_source(store: Store, n: UrlNormaliser, url: str, log_fn) -> bool:
-    raw = (url or "").strip()
-    if not raw:
-        return False
-    try:
-        n.extract_channel_ref(raw)
-        sid = store.add_channel_source(raw)
-        log_fn(f"Added channel source id={sid}")
-        return True
-    except Exception:
-        pass
-    try:
-        rss_norm = n.normalise_feed_url(raw)
-        if n.looks_like_peertube_feed(rss_norm):
-            sid = store.add_rss_source(raw)
-            log_fn(f"Added RSS source id={sid} (canonical: {rss_norm})")
-            return True
-    except Exception:
-        return False
-    return False
-
-
-def _normalize_cmd(cmd: str) -> str:
-    if not cmd:
-        return cmd
-    raw = cmd.strip().lower()
-    if raw.startswith("/"):
-        raw = raw[1:]
-    return raw.rstrip(".:,;")
-
+# ---------------------------------------------------------------------------
+# Profile sync (uses pynostr directly)
+# ---------------------------------------------------------------------------
 
 def _npub_from_pubkey(pubkey_obj) -> Optional[str]:
     for attr in ("bech32", "to_bech32", "npub", "to_npub"):
@@ -3248,129 +1360,13 @@ def _npub_from_pubkey(pubkey_obj) -> Optional[str]:
     return None
 
 
-def _privkey_to_hex(priv) -> Optional[str]:
-    for attr in ("hex", "to_hex", "private_key", "secret", "raw_secret"):
-        val = getattr(priv, attr, None)
-        try:
-            if callable(val):
-                v = val()
-            else:
-                v = val
-        except Exception:
-            continue
-        if isinstance(v, str) and v:
-            return v
-    return None
-
-
-def _apply_edit_source(store: Store, n: UrlNormaliser, source_id: str, channel_url: Optional[str], rss_url: Optional[str], log_fn) -> None:
-    try:
-        sid = int(str(source_id).strip())
-    except ValueError:
-        log_fn("Invalid source id.")
-        return
-    updates = []
-    if channel_url:
-        if str(channel_url).strip().lower() in ("none", "null", "off", "-"):
-            c = store.clear_source_channel(sid)
-            if c:
-                updates.append("channel cleared")
-        else:
-            c = store.set_source_channel(sid, channel_url)
-            if c:
-                updates.append("channel")
-    if rss_url:
-        if str(rss_url).strip().lower() in ("none", "null", "off", "-"):
-            c = store.clear_source_rss(sid)
-            if c:
-                updates.append("rss cleared")
-        else:
-            rss_norm = n.normalise_feed_url(rss_url)
-            if not n.looks_like_peertube_feed(rss_norm):
-                log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
-            c = store.set_source_rss(sid, rss_url)
-            if c:
-                updates.append("rss")
-    if not updates:
-        log_fn("Source not found.")
-        return
-    log_fn(f"Updated source {sid}: {', '.join(updates)}")
-    _resync_source(store, n, sid, log_fn)
-
-
-def _resync_source(store: Store, n: UrlNormaliser, source_id: int, log_fn) -> None:
-    cleared = store.clear_pending_for_source(source_id)
-    if cleared:
-        log_fn(f"Cleared pending items: {cleared}")
-    api_limit = int(os.environ.get("API_LIMIT_PER_SOURCE", "50"))
-    lookback_days = int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30"))
-    runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n, log_fn=log_fn)
-    runner.ingest_source_once(source_id, api_limit, lookback_days)
-
-
-def repair_db(store: Store, n: UrlNormaliser, log_fn) -> None:
-    counts = {"relays": 0, "sources": 0, "videos": 0, "published_ts": 0}
-
-    rows = store.conn.execute("SELECT id, relay_url FROM relays").fetchall()
-    for rid, relay_url in rows:
-        try:
-            norm = n.normalise_relay_url(relay_url)
-        except Exception:
-            continue
-        store.conn.execute("UPDATE relays SET relay_url_norm=? WHERE id=?", (norm, rid))
-        counts["relays"] += 1
-
-    rows = store.conn.execute("SELECT id, api_base, api_channel_url, rss_url FROM sources").fetchall()
-    for sid, api_base, api_channel_url, rss_url in rows:
-        if api_base:
-            try:
-                base_norm = n.normalise_http_url(api_base)
-                store.conn.execute("UPDATE sources SET api_base_norm=? WHERE id=?", (base_norm, sid))
-            except Exception:
-                pass
-        if api_channel_url:
-            try:
-                chan_norm = n.normalise_http_url(api_channel_url)
-                store.conn.execute("UPDATE sources SET api_channel_url_norm=? WHERE id=?", (chan_norm, sid))
-            except Exception:
-                pass
-        if rss_url:
-            try:
-                rss_norm = n.normalise_feed_url(rss_url)
-                store.conn.execute("UPDATE sources SET rss_url_norm=? WHERE id=?", (rss_norm, sid))
-            except Exception:
-                pass
-        counts["sources"] += 1
-
-    rows = store.conn.execute(
-        "SELECT id, watch_url, published_ts, first_seen_ts FROM videos"
-    ).fetchall()
-    for vid, watch_url, published_ts, first_seen_ts in rows:
-        try:
-            norm = n.normalise_watch_url(watch_url)
-            store.conn.execute("UPDATE videos SET watch_url_norm=? WHERE id=?", (norm, vid))
-            counts["videos"] += 1
-        except Exception:
-            pass
-        if published_ts is None and first_seen_ts is not None:
-            store.conn.execute("UPDATE videos SET published_ts=? WHERE id=?", (int(first_seen_ts), vid))
-            counts["published_ts"] += 1
-
-    store.conn.commit()
-    log_fn(
-        "Repair complete: "
-        f"relays={counts['relays']} sources={counts['sources']} "
-        f"videos_normed={counts['videos']} published_ts_filled={counts['published_ts']}"
-    )
-
-
-def _event_get(ev, key: str) -> Any:
+def _event_get(ev, key: str):
     if isinstance(ev, dict):
         return ev.get(key)
     return getattr(ev, key, None)
 
 
-def _extract_event_from_msg(msg) -> Optional[Any]:
+def _extract_event_from_msg(msg):
     if msg is None:
         return None
     if isinstance(msg, dict) and "event" in msg:
@@ -3381,7 +1377,7 @@ def _extract_event_from_msg(msg) -> Optional[Any]:
     return msg
 
 
-def _fetch_latest_profile_events(relays: list[str], pubkey_hex: str, timeout_seconds: int) -> tuple[dict[int, Any], int]:
+def _fetch_latest_profile_events(relays: list[str], pubkey_hex: str, timeout_seconds: int):
     rm = RelayManager(timeout=timeout_seconds)
     relay_errors = 0
     for r in relays:
@@ -3411,7 +1407,7 @@ def _fetch_latest_profile_events(relays: list[str], pubkey_hex: str, timeout_sec
     except Exception:
         relay_errors += 1
 
-    latest: dict[int, Any] = {}
+    latest: dict[int, object] = {}
     start = time.time()
     mp = getattr(rm, "message_pool", None)
     while time.time() - start < timeout_seconds:
@@ -3598,7 +1594,7 @@ def sync_profile(
         if disable_missing:
             rows = store.list_relays()
             disabled = 0
-            for (rid, _enabled, _url, url_norm, _last_used_ts, _last_error) in rows:
+            for (rid, _enabled, _url, url_norm, _last_used_ts, _last_error, _latency_ms) in rows:
                 if not url_norm:
                     continue
                 if url_norm not in imported_norms:
@@ -3606,6 +1602,188 @@ def sync_profile(
                     disabled += 1
             log_fn(f"Disabled missing relays: {disabled}")
 
+
+# ---------------------------------------------------------------------------
+# Shared helpers for CLI + interactive
+# ---------------------------------------------------------------------------
+
+def _parse_sync_profile_args(args: list[str]):
+    p = argparse.ArgumentParser(prog="sync-profile", add_help=False)
+    p.add_argument("--nsec", default=None)
+    p.add_argument("--relays", default=None)
+    p.add_argument("--import-relays", action="store_true")
+    p.add_argument("--enable-imported", action="store_true")
+    p.add_argument("--disable-missing", action="store_true")
+    p.add_argument("--timeout-seconds", type=int, default=8)
+    try:
+        return p.parse_args(args)
+    except SystemExit:
+        return "Usage: sync-profile [--relays a,b] [--nsec nsec] [--import-relays] [--enable-imported] [--disable-missing] [--timeout-seconds N]"
+
+
+def _parse_edit_source_args(args: list[str]):
+    p = argparse.ArgumentParser(prog="edit-source", add_help=False)
+    p.add_argument("source_id")
+    p.add_argument("--channel-url", dest="channel_url", default=None)
+    p.add_argument("--rss-url", dest="rss_url", default=None)
+    try:
+        ns = p.parse_args(args)
+    except SystemExit:
+        return "Usage: edit-source <id> [--channel-url URL] [--rss-url URL]"
+    if not ns.channel_url and not ns.rss_url:
+        return "Provide --channel-url and/or --rss-url."
+    return ns
+
+
+def _parse_set_rate_args(args: list[str]):
+    p = argparse.ArgumentParser(prog="set-rate", add_help=False)
+    p.add_argument("--min-interval-seconds", type=int, default=None)
+    p.add_argument("--max-posts-per-hour", type=int, default=None)
+    p.add_argument("--max-posts-per-day-per-source", type=int, default=None)
+    try:
+        ns = p.parse_args(args)
+    except SystemExit:
+        return "Usage: set-rate [--min-interval-seconds N] [--max-posts-per-hour N] [--max-posts-per-day-per-source N]"
+    if ns.min_interval_seconds is None and ns.max_posts_per_hour is None and ns.max_posts_per_day_per_source is None:
+        return "Provide --min-interval-seconds and/or --max-posts-per-hour and/or --max-posts-per-day-per-source."
+    return ns
+
+
+def _maybe_add_url_as_source(store: Store, n: UrlNormaliser, url: str, log_fn) -> bool:
+    raw = (url or "").strip()
+    if not raw:
+        return False
+    try:
+        n.extract_channel_ref(raw)
+        sid = store.add_channel_source(raw)
+        log_fn(f"Added channel source id={sid}")
+        return True
+    except Exception:
+        pass
+    try:
+        rss_norm = n.normalise_feed_url(raw)
+        if n.looks_like_peertube_feed(rss_norm):
+            sid = store.add_rss_source(raw)
+            log_fn(f"Added RSS source id={sid} (canonical: {rss_norm})")
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _normalize_cmd(cmd: str) -> str:
+    if not cmd:
+        return cmd
+    raw = cmd.strip().lower()
+    if raw.startswith("/"):
+        raw = raw[1:]
+    return raw.rstrip(".:,;")
+
+
+def _apply_edit_source(store: Store, n: UrlNormaliser, source_id: str, channel_url: Optional[str], rss_url: Optional[str], log_fn) -> None:
+    try:
+        sid = int(str(source_id).strip())
+    except ValueError:
+        log_fn("Invalid source id.")
+        return
+    updates = []
+    if channel_url:
+        if str(channel_url).strip().lower() in ("none", "null", "off", "-"):
+            c = store.clear_source_channel(sid)
+            if c:
+                updates.append("channel cleared")
+        else:
+            c = store.set_source_channel(sid, channel_url)
+            if c:
+                updates.append("channel")
+    if rss_url:
+        if str(rss_url).strip().lower() in ("none", "null", "off", "-"):
+            c = store.clear_source_rss(sid)
+            if c:
+                updates.append("rss cleared")
+        else:
+            rss_norm = n.normalise_feed_url(rss_url)
+            if not n.looks_like_peertube_feed(rss_norm):
+                log_fn("Warning: RSS URL does not look like a typical PeerTube feed (still setting).")
+            c = store.set_source_rss(sid, rss_url)
+            if c:
+                updates.append("rss")
+    if not updates:
+        log_fn("Source not found.")
+        return
+    log_fn(f"Updated source {sid}: {', '.join(updates)}")
+    _resync_source(store, n, sid, log_fn)
+
+
+def _resync_source(store: Store, n: UrlNormaliser, source_id: int, log_fn) -> None:
+    cleared = store.clear_pending_for_source(source_id)
+    if cleared:
+        log_fn(f"Cleared pending items: {cleared}")
+    api_limit = int(os.environ.get("API_LIMIT_PER_SOURCE", "50"))
+    lookback_days = int(os.environ.get("NEW_SOURCE_LOOKBACK_DAYS", "30"))
+    runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n, log_fn=log_fn)
+    runner.ingest_source_once(source_id, api_limit, lookback_days)
+
+
+def repair_db(store: Store, n: UrlNormaliser, log_fn) -> None:
+    counts = {"relays": 0, "sources": 0, "videos": 0, "published_ts": 0}
+
+    rows = store.conn.execute("SELECT id, relay_url FROM relays").fetchall()
+    for rid, relay_url in rows:
+        try:
+            norm = n.normalise_relay_url(relay_url)
+        except Exception:
+            continue
+        store.conn.execute("UPDATE relays SET relay_url_norm=? WHERE id=?", (norm, rid))
+        counts["relays"] += 1
+
+    rows = store.conn.execute("SELECT id, api_base, api_channel_url, rss_url FROM sources").fetchall()
+    for sid, api_base, api_channel_url, rss_url in rows:
+        if api_base:
+            try:
+                base_norm = n.normalise_http_url(api_base)
+                store.conn.execute("UPDATE sources SET api_base_norm=? WHERE id=?", (base_norm, sid))
+            except Exception:
+                pass
+        if api_channel_url:
+            try:
+                chan_norm = n.normalise_http_url(api_channel_url)
+                store.conn.execute("UPDATE sources SET api_channel_url_norm=? WHERE id=?", (chan_norm, sid))
+            except Exception:
+                pass
+        if rss_url:
+            try:
+                rss_norm = n.normalise_feed_url(rss_url)
+                store.conn.execute("UPDATE sources SET rss_url_norm=? WHERE id=?", (rss_norm, sid))
+            except Exception:
+                pass
+        counts["sources"] += 1
+
+    rows = store.conn.execute(
+        "SELECT id, watch_url, published_ts, first_seen_ts FROM videos"
+    ).fetchall()
+    for vid, watch_url, published_ts, first_seen_ts in rows:
+        try:
+            norm = n.normalise_watch_url(watch_url)
+            store.conn.execute("UPDATE videos SET watch_url_norm=? WHERE id=?", (norm, vid))
+            counts["videos"] += 1
+        except Exception:
+            pass
+        if published_ts is None and first_seen_ts is not None:
+            store.conn.execute("UPDATE videos SET published_ts=? WHERE id=?", (int(first_seen_ts), vid))
+            counts["published_ts"] += 1
+
+    store.conn.commit()
+    log_fn(
+        "Repair complete: "
+        f"relays={counts['relays']} sources={counts['sources']} "
+        f"videos_normed={counts['videos']} published_ts_filled={counts['published_ts']}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Interactive mode (TUI or shell)
+# ---------------------------------------------------------------------------
 
 def _run_interactive(
     args: argparse.Namespace,
@@ -3892,7 +2070,7 @@ def _interactive_tui(db_path: str, n: UrlNormaliser, stop_event: threading.Event
             if should_quit:
                 self.action_quit()
 
-        def _handle_pending_input(self, line: str, inp: Input) -> Optional[tuple[Optional[str], list[str]]]:
+        def _handle_pending_input(self, line: str, inp: Input):
             if self._pending_secret:
                 self._pending_secret = False
                 inp.password = False
@@ -4011,7 +2189,7 @@ def _interactive_tui(db_path: str, n: UrlNormaliser, stop_event: threading.Event
             self._reset_pending(inp)
             return cmd, args
 
-        def _handle_new_command_input(self, line: str, inp: Input) -> Optional[tuple[str, list[str]]]:
+        def _handle_new_command_input(self, line: str, inp: Input):
             if line.startswith(("http://", "https://")) and self._last_prompt:
                 lp = self._last_prompt.lower()
                 if "channel or rss" in lp:
@@ -4222,7 +2400,7 @@ def _interactive_tui(db_path: str, n: UrlNormaliser, stop_event: threading.Event
             elif "relay id" in pl:
                 rows = self.store.list_relays()
                 items = []
-                for (rid, _enabled, url, _url_norm, _last_used_ts, _last_error) in rows:
+                for (rid, _enabled, url, _url_norm, _last_used_ts, _last_error, _latency_ms) in rows:
                     items.append((f"{rid}: {url}", str(rid)))
                 if items:
                     self._set_palette_items(items, "relays")

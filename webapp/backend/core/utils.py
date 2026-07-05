@@ -1,10 +1,17 @@
-import re
-import time
 import calendar
+import os
+import re
+import threading
+import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple
 from urllib.parse import urlparse, urlunparse
+
+
+DEFAULT_RELAYS = ["wss://relay.damus.io", "wss://nos.lol"]
+KEYRING_SERVICE = "peertube_nostr"
+
 
 class UrlNormaliser:
     ALLOWED_RELAY_SCHEMES = {"wss", "ws"}
@@ -109,7 +116,8 @@ class UrlNormaliser:
             raise ValueError("Could not extract channel handle from URL")
         return f"{p.scheme}://{p.netloc}", seg
 
-def parse_any_timestamp(value: Any) -> Optional[int]:
+
+def _parse_any_timestamp(value) -> Optional[int]:
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -134,3 +142,36 @@ def parse_any_timestamp(value: Any) -> Optional[int]:
             except Exception:
                 return None
     return None
+
+
+def _format_table(headers: list[str], rows: list[list[str]], col_sep: str = "  ") -> list[str]:
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, val in enumerate(row):
+            if i < len(widths):
+                widths[i] = max(widths[i], len(val))
+    out: list[str] = []
+    header = col_sep.join(h.ljust(widths[i]) for i, h in enumerate(headers))
+    out.append(header)
+    out.append("-" * len(header))
+    for row in rows:
+        padded = []
+        for i, val in enumerate(row):
+            if i < len(widths):
+                padded.append(val.ljust(widths[i]))
+        out.append(col_sep.join(padded))
+    return out
+
+
+def _sleep_interruptible(seconds: int, stop_event: Optional[threading.Event]) -> bool:
+    if seconds <= 0:
+        return True
+    if stop_event is None:
+        time.sleep(seconds)
+        return True
+    end = time.time() + seconds
+    while time.time() < end:
+        if stop_event.is_set():
+            return False
+        time.sleep(0.2)
+    return True

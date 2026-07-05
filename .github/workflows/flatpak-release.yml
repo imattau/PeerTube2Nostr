@@ -1,0 +1,34 @@
+name: Build and Release Flatpak
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:gnome-46
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          dnf -y install rust cargo nodejs npm webkit2gtk4.1-devel
+          npm ci --prefix webapp/frontend
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: peertube2nostr.flatpak
+          manifest-path: build-aux/flatpak/com.peertube2nostr.desktop.json
+          cache-key: flatpak-builder-${{ github.sha }}
+
+      - name: Upload Flatpak
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: peertube2nostr.flatpak
