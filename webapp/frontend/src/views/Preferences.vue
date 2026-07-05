@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { api, type Settings } from '@/api/client'
 import { storeIdentityHex, storeIdentityNpub } from '@/api/sync-client'
 import { isPRFSupported, registerPasskeyIdentity, importPasskeyIdentityFromNsec, hasStoredPasskeyIdentity, getStoredPasskeyPubkey, exportPasskeyIdentityAsNsec } from 'nostr-passkey'
 import { nip19, utils } from 'nostr-tools'
+import * as nip46 from '@/api/nip46'
 
 const settings = ref<Settings | null>(null)
 const loading = ref(true)
@@ -21,6 +22,11 @@ const passkeyImportNsec = ref('')
 const syncing = ref(false)
 const nip07Available = ref(false)
 const nip07Pubkey = ref('')
+
+const nip46Connected = ref(false)
+const nip46Connecting = ref(false)
+const nip46Pubkey = ref<string | null>(null)
+const nip46Error = ref('')
 
 async function load() {
   loading.value = true
@@ -119,6 +125,33 @@ async function exportPasskeyNsec() {
   } catch (e: any) { alert(e.message) }
 }
 
+function syncNip46Status() {
+  const s = nip46.getStatus()
+  nip46Connected.value = s.connected
+  nip46Connecting.value = s.connecting
+  nip46Pubkey.value = s.pubkey
+}
+
+async function connectBunker() {
+  if (!bunkerUrl.value) return
+  nip46Error.value = ''
+  try {
+    const pubkey = await nip46.connect(bunkerUrl.value)
+    storeIdentityNpub(pubkey)
+    statusMsg.value = 'Connected to remote signer'
+    showBunker.value = false
+    syncNip46Status()
+  } catch (e: any) {
+    nip46Error.value = e.message
+  }
+}
+
+async function disconnectBunker() {
+  await nip46.disconnect()
+  syncNip46Status()
+  statusMsg.value = 'Disconnected from remote signer'
+}
+
 onMounted(async () => {
   await load()
   passkeySupported.value = await isPRFSupported()
@@ -133,6 +166,14 @@ onMounted(async () => {
       }
     } catch { }
   }
+  nip46.onStatusChange(syncNip46Status)
+  syncNip46Status()
+  await nip46.tryRestore()
+  syncNip46Status()
+})
+
+onUnmounted(() => {
+  nip46.onStatusChange(null)
 })
 
 function npub(hex: string): string {
@@ -248,21 +289,28 @@ function npub(hex: string): string {
       <div class="action-row">
         <div class="action-info">
           <div class="action-title">NIP-46 Bunker (remote signer)</div>
-          <div class="action-subtitle">Connect to a Nostr Connect bunker for remote signing</div>
+          <div class="action-subtitle" v-if="nip46Pubkey && nip46Connected" style="word-break:break-all">{{ npub(nip46Pubkey) }}</div>
+          <div class="action-subtitle" v-else>Connect to a Nostr Connect bunker for remote signing</div>
         </div>
-        <div class="action-right">
-          <button class="button-default" @click="showBunker = !showBunker">Configure</button>
+        <div class="action-right flex items-center gap-8">
+          <span v-if="nip46Connecting" class="badge badge-warning">Connecting...</span>
+          <span v-else-if="nip46Connected && nip46Pubkey" class="badge badge-success">Connected</span>
+          <span v-else class="badge badge-error">Not connected</span>
+          <button class="button-default" v-if="nip46Connected" @click="disconnectBunker">Disconnect</button>
+          <button class="button-default" v-else @click="showBunker = !showBunker">Configure</button>
         </div>
       </div>
 
       <div v-if="showBunker" class="p-16">
         <div class="body mb-8">Enter your bunker URL (e.g. <code>bunker://...</code>):</div>
-        <input v-model="bunkerUrl" type="text" placeholder="bunker://..." class="w-full" />
-        <div class="body-small mt-8" style="color:#999">
-          NIP-46 bunker support is planned. Your nsec stays on the remote signer.
+        <input v-model="bunkerUrl" type="text" placeholder="bunker://<remote-pubkey>?relay=wss://..." class="w-full" @keyup.enter="connectBunker" />
+        <div class="body-small mt-8" style="color:#666">
+          Your keys stay on the remote signer. Signing requests are sent via relay.
         </div>
+        <div v-if="nip46Error" class="body-small mt-4" style="color:#C00">{{ nip46Error }}</div>
         <div class="flex gap-8 mt-8">
-          <button class="button-default" @click="showBunker = false; bunkerUrl = ''">Close</button>
+          <button class="button-primary" :disabled="nip46Connecting || !bunkerUrl" @click="connectBunker">{{ nip46Connecting ? 'Connecting...' : 'Connect' }}</button>
+          <button class="button-default" @click="showBunker = false; bunkerUrl = ''; nip46Error = ''">Cancel</button>
         </div>
       </div>
 

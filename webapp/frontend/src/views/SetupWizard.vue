@@ -5,11 +5,12 @@ import { api } from '@/api/client'
 import { storeIdentityHex, storeIdentityNpub } from '@/api/sync-client'
 import { isPRFSupported, registerPasskeyIdentity, importPasskeyIdentityFromNsec, hasStoredPasskeyIdentity, getStoredPasskeyPubkey } from 'nostr-passkey'
 import { nip19, utils } from 'nostr-tools'
+import * as nip46 from '@/api/nip46'
 
 const router = useRouter()
 
 const step = ref(1)
-const identityMethod = ref<'passkey-create' | 'passkey-import' | 'nsec' | 'nip07' | null>(null)
+const identityMethod = ref<'passkey-create' | 'passkey-import' | 'nsec' | 'nip07' | 'nip46' | null>(null)
 
 const nsecInput = ref('')
 const importNsecInput = ref('')
@@ -30,6 +31,10 @@ const storedPasskeyPubkey = ref('')
 
 const showingPasskeyImport = ref(false)
 const showingNsecInput = ref(false)
+const showingBunkerInput = ref(false)
+const bunkerUrl = ref('')
+const nip46Connecting = ref(false)
+const nip46Error = ref('')
 const pkOpts = { rpName: 'PeerTube2Nostr', storage: sessionStorage }
 
 onMounted(async () => {
@@ -99,6 +104,21 @@ function useNip07() {
   if (nip07Pubkey.value) {
     storeIdentityNpub(nip07Pubkey.value)
   }
+}
+
+async function useNip46() {
+  if (!bunkerUrl.value) return
+  nip46Connecting.value = true
+  nip46Error.value = ''
+  try {
+    const pubkey = await nip46.connect(bunkerUrl.value)
+    identityMethod.value = 'nip46'
+    showingBunkerInput.value = false
+    storeIdentityNpub(pubkey)
+  } catch (e: any) {
+    nip46Error.value = e.message
+  }
+  nip46Connecting.value = false
 }
 
 function decodedNsec(): string {
@@ -229,6 +249,30 @@ async function finish() {
 
         <div v-if="identityMethod === 'nsec' && nsecInput" class="body-small mt-8" style="color:#2EC27E">
           Key selected
+        </div>
+
+        <!-- NIP-46 Remote Signer -->
+        <div class="card card-selectable" :class="{ 'card-selected': identityMethod === 'nip46' }" @click="showingBunkerInput = !showingBunkerInput">
+          <div class="flex items-center gap-8">
+            <div class="radio-circle" :class="{ 'radio-selected': identityMethod === 'nip46' }" />
+            <div>
+              <div class="heading-4">NIP-46 Remote Signer</div>
+              <div class="body-small">Connect to a Nostr Connect bunker — keys stay on your device</div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="showingBunkerInput" class="mt-8">
+          <div class="heading-4 mb-8">Enter your bunker URL:</div>
+          <input v-model="bunkerUrl" type="text" placeholder="bunker://<pubkey>?relay=wss://..." class="w-full" @keyup.enter="useNip46" />
+          <div class="body-small mt-4" style="color:#666">
+            Provided by your Nostr signing app (e.g. Amber, Nostur, etc.)
+          </div>
+          <div v-if="nip46Error" class="body-small mt-4" style="color:#C00">{{ nip46Error }}</div>
+          <div class="flex gap-8 mt-8">
+            <button class="button-primary" :disabled="nip46Connecting || !bunkerUrl" @click="useNip46">{{ nip46Connecting ? 'Connecting...' : 'Connect' }}</button>
+            <button class="button-default" @click="showingBunkerInput = false; bunkerUrl = ''; nip46Error = ''">Cancel</button>
+          </div>
         </div>
 
         <div v-if="!passkeySupported && !nip07Available" class="body-small mt-8">

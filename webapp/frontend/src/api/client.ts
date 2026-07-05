@@ -1,5 +1,6 @@
 import { tauriInvoke, isTauri } from './adapter'
 import { isSyncAvailable, restoreState, pushState } from './sync-client'
+import * as nip46 from './nip46'
 
 const BASE = '/api'
 let _useTauri = isTauri()
@@ -234,4 +235,10 @@ export const api = {
       ? Promise.resolve({ found: false })
       : httpCall<{ found: boolean; version?: number; ts?: number; video_count?: number; source_count?: number }>('GET', '/sync/restore')
   },
+
+  // NIP-46
+  nip46Status: () => nip46.getStatus(),
+  nip46Connect: (url: string) => nip46.connect(url),
+  nip46Disconnect: () => nip46.disconnect(),
+  nip46Sign: (event: Parameters<typeof nip46.signEvent>[0]) => nip46.signEvent(event),
 }

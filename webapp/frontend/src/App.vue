@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useMetricsStore } from '@/stores/metrics'
 import { api } from '@/api/client'
 import { storeIdentityNpub } from '@/api/sync-client'
+import * as nip46 from '@/api/nip46'
 
 const router = useRouter()
 const route = useRoute()
@@ -57,6 +58,7 @@ function navigate(name: string) {
 
 const nip07Available = ref(false)
 let nip07Interval: ReturnType<typeof setInterval> | null = null
+let nip46Interval: ReturnType<typeof setInterval> | null = null
 
 async function tryPublishWithNip07() {
   try {
@@ -73,10 +75,30 @@ async function tryPublishWithNip07() {
   } catch { }
 }
 
+async function tryPublishWithNip46() {
+  try {
+    const status = nip46.getStatus()
+    if (!status.connected) return
+    const next = await api.nextPending()
+    if (!next.eligible || !next.video) return
+    const data = await api.getPublishEventData(next.video.id)
+    if (!data.relays.length) return
+    const event = { content: data.content, kind: data.kind, tags: data.tags, created_at: Math.floor(Date.now() / 1000) }
+    const signed = await nip46.signEvent(event)
+    await api.publishSigned(next.video.id, signed)
+  } catch { }
+}
+
 onMounted(async () => {
+  // Try to restore NIP-46 connection from session
+  try {
+    await nip46.tryRestore()
+  } catch { }
+
   try {
     const status = await api.setupStatus()
-    if (status.needs_onboarding && route.name !== 'wizard') {
+    const nip46Status = nip46.getStatus()
+    if (status.needs_onboarding && !nip46Status.connected && route.name !== 'wizard') {
       router.replace({ name: 'wizard' })
     }
   } catch { }
@@ -100,11 +122,20 @@ onMounted(async () => {
     nip07Interval = setInterval(tryPublishWithNip07, 30000)
     tryPublishWithNip07()
   }
+
+  // NIP-46 publishing bridge
+  const nip46Status = nip46.getStatus()
+  if (nip46Status.connected && nip46Status.pubkey) {
+    storeIdentityNpub(nip46Status.pubkey)
+    nip46Interval = setInterval(tryPublishWithNip46, 30000)
+    tryPublishWithNip46()
+  }
 })
 
 onUnmounted(() => {
   metrics.stopPolling()
   if (nip07Interval) clearInterval(nip07Interval)
+  if (nip46Interval) clearInterval(nip46Interval)
 })
 </script>
 
