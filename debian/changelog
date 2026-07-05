@@ -1,8 +1,8 @@
-peertube2nostr (0.1.4) unstable; urgency=low
+peertube2nostr (0.1.5) unstable; urgency=low
 
-  * Add system tray icon for minimize-to-background on GNOME
+  * Core module extraction, FastAPI backend, Vue 3 frontend, Tauri desktop
 
- -- Matt Thomson <peertube2nostr@users.noreply.github.com>  Tue, 01 Jul 2026 00:00:00 +0000
+ -- Matt Thomson <peertube2nostr@users.noreply.github.com>  Sun, 05 Jul 2026 00:00:00 +0000
 
 peertube2nostr (0.0.2) unstable; urgency=low
 
