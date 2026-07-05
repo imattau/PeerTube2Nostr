@@ -16,7 +16,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             bundle: deb appimage rpm
           - platform: macos-latest
-            target: x86_64-apple-darwin
+            target: universal-apple-darwin
             bundle: dmg
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
@@ -57,7 +57,8 @@ jobs:
       - name: Install macOS dependencies
         if: ${{ matrix.platform == 'macos-latest' }}
         run: |
-          brew install webkit2gtk || true
+          # macOS uses system WebKit — no extra packages needed
+          echo "macOS SDK ready"
 
       - name: Install frontend dependencies
         run: |
