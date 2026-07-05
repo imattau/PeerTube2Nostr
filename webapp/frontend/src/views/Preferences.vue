@@ -64,7 +64,8 @@ async function syncProfile() {
   syncing.value = true
   statusMsg.value = ''
   try {
-    const res = await api.importNip65()
+    const pubkey = nip07Pubkey.value || undefined
+    const res = await api.importNip65(pubkey)
     statusMsg.value = `Imported ${res.imported} relay(s) from NIP-65 profile`
   } catch (e: any) {
     statusMsg.value = `Sync failed: ${e.message}`

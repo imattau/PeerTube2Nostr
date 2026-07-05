@@ -123,10 +123,11 @@ export const api = {
     () => httpCall<{ results: { relay_url: string; latency_ms: number | null; error: string | null }[] }>('POST', '/relays/check'),
     () => Promise.resolve({ results: [] }),
   ),
-  importNip65: () => pick(
-    () => httpCall<{ imported: number }>('POST', '/relays/import-nip65'),
-    () => tauriInvoke<{ imported: number }>('import_nip65_relays'),
-  )(),
+  importNip65: (pubkey?: string) => {
+    const httpFn = () => httpCall<{ imported: number }>('POST', `/relays/import-nip65${pubkey ? `?pubkey=${pubkey}` : ''}`)
+    const tauriFn = () => tauriInvoke<{ imported: number }>('import_nip65_relays')
+    return (pick(httpFn, tauriFn))()
+  },
 
   // Queue
   listVideos: (status = 'pending', limit = 200) => pick(

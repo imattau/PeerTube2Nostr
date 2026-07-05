@@ -13,15 +13,22 @@ from core.sync_state import unwrap_gift_wrap, unseal
 
 
 def import_nip65_relays(
-    nsec: str,
-    store: Store,
-    n: UrlNormaliser,
-    bootstrap_relays: list[str],
+    nsec: str = "",
+    store: Store = None,
+    n: UrlNormaliser = None,
+    bootstrap_relays: list[str] = None,
     log_fn=print,
+    pubkey_hex: str = "",
 ) -> int:
-    priv = PrivateKey.from_nsec(nsec)
-    pub_hex = priv.public_key.hex()
-    priv_hex = priv.hex()
+    if nsec:
+        priv = PrivateKey.from_nsec(nsec)
+        pub_hex = priv.public_key.hex()
+        priv_hex = priv.hex()
+    elif pubkey_hex:
+        pub_hex = pubkey_hex
+        priv_hex = ""
+    else:
+        return 0
 
     rm = RelayManager(timeout=8)
     for r in bootstrap_relays:
@@ -62,7 +69,7 @@ def import_nip65_relays(
                 )
                 if has_r_tags:
                     relays_ev = ev
-            elif ev_kind == 1059:
+            elif ev_kind == 1059 and priv_hex:
                 # Try to unwrap gift wrap → find a relay-list rumor inside
                 try:
                     ev_obj = _to_event(ev)
