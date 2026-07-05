@@ -10,7 +10,7 @@ jobs:
   flatpak:
     runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-46
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -19,6 +19,7 @@ jobs:
         run: |
           dnf -y install rust cargo nodejs npm webkit2gtk4.1-devel
           npm ci --prefix webapp/frontend
+          dnf clean all
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6

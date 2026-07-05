@@ -1,9 +1,12 @@
 {
   "id": "com.peertube2nostr.desktop",
   "runtime": "org.gnome.Platform",
-  "runtime-version": "46",
+  "runtime-version": "47",
   "sdk": "org.gnome.Sdk",
-  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable",
+    "org.freedesktop.Sdk.Extension.node22"
+  ],
   "command": "peertube2nostr",
   "finish-args": [
     "--share=network",
@@ -14,7 +17,7 @@
     "--filesystem=home"
   ],
   "build-options": {
-    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin",
     "env": {
       "CARGO_HOME": "/run/build/peertube2nostr/cargo"
     }
