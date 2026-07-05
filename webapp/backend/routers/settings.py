@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 
 from core.database import Store, get_stored_nsec, set_stored_nsec, clear_stored_nsec
 from auth import verify_api_key
@@ -56,7 +56,7 @@ def get_nsec_status(
 
 @router.put("/nsec")
 def set_nsec(
-    nsec: str,
+    nsec: str = Body(..., embed=True),
     db_path: str = Depends(get_db_path),
 ):
     if not nsec:
