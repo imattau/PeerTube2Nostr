@@ -9,6 +9,7 @@ const showAdd = ref(false)
 const addUrl = ref('')
 const adding = ref(false)
 const importing = ref(false)
+const nip07Pubkey = ref('')
 
 async function checkHealth() {
   checking.value = true
@@ -54,7 +55,8 @@ async function removeRelay(id: number, url: string) {
 async function importNip65() {
   importing.value = true
   try {
-    const res = await api.importNip65()
+    const pubkey = nip07Pubkey.value || undefined
+    const res = await api.importNip65(pubkey)
     alert(`Imported ${res.imported} relay(s) from NIP-65 profile.`)
     await load()
   } catch (e: any) {
@@ -78,6 +80,12 @@ function latencyLabel(latency: number | null): string {
 onMounted(async () => {
   await load()
   checkHealth()
+  if (typeof window !== 'undefined' && 'nostr' in window) {
+    try {
+      const win = window as any
+      nip07Pubkey.value = await win.nostr.getPublicKey()
+    } catch { }
+  }
 })
 </script>
 
