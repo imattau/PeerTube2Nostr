@@ -59,6 +59,8 @@ def add_source(url: str, store: Store = Depends(get_store), n: UrlNormaliser = D
         n.extract_channel_ref(url)
         sid = store.add_channel_source(url)
         _sync_sources(store, db_path)
+        runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n)
+        runner.ingest_source_once(sid, api_limit=50, lookback_days=30)
         return {"id": sid, "type": "channel"}
     except Exception:
         pass
@@ -66,6 +68,8 @@ def add_source(url: str, store: Store = Depends(get_store), n: UrlNormaliser = D
         rss_norm = n.normalise_feed_url(url)
         if n.looks_like_peertube_feed(rss_norm):
             sid = store.add_rss_source(url)
+            runner = Runner(store, PeerTubeClient(n), NostrPublisher(), n)
+            runner.ingest_source_once(sid, api_limit=50, lookback_days=30)
             return {"id": sid, "type": "rss"}
     except Exception:
         pass

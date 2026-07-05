@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api, type Settings } from '@/api/client'
+import { storeIdentityHex, storeIdentityNpub } from '@/api/sync-client'
 import { isPRFSupported, registerPasskeyIdentity, importPasskeyIdentityFromNsec, hasStoredPasskeyIdentity, getStoredPasskeyPubkey, exportPasskeyIdentityAsNsec } from 'nostr-passkey'
-import { nip19 } from 'nostr-tools'
+import { nip19, utils } from 'nostr-tools'
 
 const settings = ref<Settings | null>(null)
 const loading = ref(true)
@@ -47,6 +48,12 @@ async function setNsec() {
   try {
     const res = await api.setNsec(nsecValue.value)
     statusMsg.value = `Stored in ${res.stored_in}`
+    try {
+      const decoded = nip19.decode(nsecValue.value)
+      if (decoded.type === 'nsec') {
+        storeIdentityHex(utils.bytesToHex(decoded.data as Uint8Array))
+      }
+    } catch {}
     nsecValue.value = ''
     showNsec.value = false
     await load()
@@ -80,6 +87,7 @@ async function setupPasskey() {
     const result = await registerPasskeyIdentity(pkOpts)
     const nsec = nip19.nsecEncode(result.secretKey as Uint8Array)
     await api.setNsec(nsec)
+    storeIdentityHex(utils.bytesToHex(result.secretKey as Uint8Array))
     statusMsg.value = 'New passkey created and stored in keyring'
     storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
   } catch (e: any) { alert(e.message) }
@@ -90,6 +98,12 @@ async function importPasskey() {
   try {
     await importPasskeyIdentityFromNsec(passkeyImportNsec.value, pkOpts)
     await api.setNsec(passkeyImportNsec.value)
+    try {
+      const decoded = nip19.decode(passkeyImportNsec.value)
+      if (decoded.type === 'nsec') {
+        storeIdentityHex(utils.bytesToHex(decoded.data as Uint8Array))
+      }
+    } catch {}
     statusMsg.value = 'NSEC imported into passkey and stored in keyring'
     passkeyImportNsec.value = ''
     showPasskeyImport.value = false
@@ -114,6 +128,9 @@ onMounted(async () => {
     try {
       const win = window as any
       nip07Pubkey.value = await win.nostr.getPublicKey()
+      if (nip07Pubkey.value) {
+        storeIdentityNpub(nip07Pubkey.value)
+      }
     } catch { }
   }
 })

@@ -722,6 +722,32 @@ class Store:
         row = self.conn.execute("SELECT COUNT(*) FROM relays").fetchone()
         return int(row[0]) if row else 0
 
+    def get_video_by_id(self, video_id: int) -> Optional[dict]:
+        row = self.conn.execute(
+            """
+            SELECT v.id, v.source_id, v.watch_url, v.title, v.summary,
+                   v.hls_url, v.direct_url, v.thumbnail_url, v.duration, v.width, v.height,
+                   v.peertube_instance, v.channel_name, v.channel_url,
+                   v.account_name, v.account_url,
+                   v.status, v.nostr_event_id, v.error,
+                   v.first_seen_ts, v.last_attempt_ts, v.posted_ts, v.published_ts
+            FROM videos v
+            WHERE v.id=?
+            """,
+            (video_id,),
+        ).fetchone()
+        if not row:
+            return None
+        keys = [
+            "id", "source_id", "watch_url", "title", "summary",
+            "hls_url", "direct_url", "thumbnail_url", "duration", "width", "height",
+            "peertube_instance", "channel_name", "channel_url",
+            "account_name", "account_url",
+            "status", "nostr_event_id", "error",
+            "first_seen_ts", "last_attempt_ts", "posted_ts", "published_ts",
+        ]
+        return dict(zip(keys, row))
+
     def video_exists(self, source_id: int, entry_key: str) -> bool:
         row = self.conn.execute(
             "SELECT 1 FROM videos WHERE source_id=? AND entry_key=? LIMIT 1",

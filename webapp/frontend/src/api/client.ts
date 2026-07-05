@@ -1,4 +1,5 @@
 import { tauriInvoke, isTauri } from './adapter'
+import { isSyncAvailable, restoreState, pushState } from './sync-client'
 
 const BASE = '/api'
 let _useTauri = isTauri()
@@ -145,6 +146,26 @@ export const api = {
     () => Promise.resolve({ video: null, wait_seconds: 0, eligible: false }),
   )(),
 
+  // NIP-07 publishing
+  getPublishEventData: (videoId: number) => pick(
+    () => httpCall<{ content: string; kind: number; tags: string[][]; relays: string[]; author: string }>('GET', `/queue/${videoId}/event-data`),
+    () => Promise.reject(new Error('NIP-07 not supported in Tauri')),
+  )(),
+
+  publishSigned: (videoId: number, eventJson: Record<string, any>) => pick(
+    () => request<{ ok: boolean; event_id: string }>('/queue/publish-signed', {
+      method: 'POST',
+      body: JSON.stringify({ video_id: videoId, event_json: eventJson }),
+    }),
+    () => Promise.reject(new Error('NIP-07 not supported in Tauri')),
+  )(),
+
+  // Queue counts
+  getQueueCounts: pick(
+    () => httpCall<{ pending: number; failed: number; posted: number }>('GET', '/queue/counts'),
+    () => tauri<{ pending: number; failed: number; posted: number }>('get_queue_counts'),
+  ),
+
   // Metrics
   getMetrics: pick(
     () => httpCall<Metrics>('GET', '/metrics'),
@@ -193,16 +214,24 @@ export const api = {
   ),
 
   // Sync
-  syncState: pick(
-    () => httpCall<{ event_id: string }>('POST', '/sync'),
-    () => Promise.resolve({ event_id: '' }),
-  ),
+  syncState: async () => {
+    if (!_useTauri && isSyncAvailable()) {
+      return pushState()
+    }
+    return _useTauri
+      ? Promise.resolve({ event_id: '' })
+      : httpCall<{ event_id: string }>('POST', '/sync')
+  },
   syncStatus: pick(
     () => httpCall<{ available: boolean; pubkey?: string; relay_count?: number }>('GET', '/sync/status'),
     () => Promise.resolve({ available: false }),
   ),
-  syncRestore: pick(
-    () => httpCall<{ found: boolean; version?: number; ts?: number; video_count?: number; source_count?: number }>('GET', '/sync/restore'),
-    () => Promise.resolve({ found: false }),
-  ),
+  syncRestore: async () => {
+    if (!_useTauri && isSyncAvailable()) {
+      return restoreState()
+    }
+    return _useTauri
+      ? Promise.resolve({ found: false })
+      : httpCall<{ found: boolean; version?: number; ts?: number; video_count?: number; source_count?: number }>('GET', '/sync/restore')
+  },
 }

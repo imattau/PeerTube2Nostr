@@ -2,8 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
+import { storeIdentityHex, storeIdentityNpub } from '@/api/sync-client'
 import { isPRFSupported, registerPasskeyIdentity, importPasskeyIdentityFromNsec, hasStoredPasskeyIdentity, getStoredPasskeyPubkey } from 'nostr-passkey'
-import { nip19 } from 'nostr-tools'
+import { nip19, utils } from 'nostr-tools'
 
 const router = useRouter()
 
@@ -49,6 +50,7 @@ async function createPasskey() {
     const result = await registerPasskeyIdentity(pkOpts)
     passkeyPubkey.value = result.pubkey
     passkeyNsecHex.value = bytesToHex(result.secretKey as Uint8Array)
+    storeIdentityHex(passkeyNsecHex.value)
     identityMethod.value = 'passkey-create'
     showingPasskeyImport.value = false
     showingNsecInput.value = false
@@ -64,6 +66,7 @@ async function importPasskey() {
     const result = await importPasskeyIdentityFromNsec(importNsecInput.value, pkOpts)
     passkeyPubkey.value = result.pubkey
     passkeyNsecHex.value = bytesToHex(result.secretKey as Uint8Array)
+    storeIdentityHex(passkeyNsecHex.value)
     identityMethod.value = 'passkey-import'
     showingPasskeyImport.value = false
     showingNsecInput.value = false
@@ -81,12 +84,21 @@ function useNsecDirect() {
   identityMethod.value = 'nsec'
   showingNsecInput.value = false
   showingPasskeyImport.value = false
+  try {
+    const decoded = nip19.decode(nsecInput.value)
+    if (decoded.type === 'nsec') {
+      storeIdentityHex(utils.bytesToHex(decoded.data as Uint8Array))
+    }
+  } catch {}
 }
 
 function useNip07() {
   identityMethod.value = 'nip07'
   showingNsecInput.value = false
   showingPasskeyImport.value = false
+  if (nip07Pubkey.value) {
+    storeIdentityNpub(nip07Pubkey.value)
+  }
 }
 
 function decodedNsec(): string {

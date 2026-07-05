@@ -103,6 +103,13 @@ pub struct CountResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueCounts {
+    pub pending: i64,
+    pub failed: i64,
+    pub posted: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NsecStatus {
     pub configured: bool,
 }

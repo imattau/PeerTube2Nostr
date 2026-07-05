@@ -31,10 +31,10 @@ def sync(
 ):
     syncer = _make_syncer(store, db_path)
     if not syncer:
-        raise HTTPException(status_code=400, detail="nsec not configured or no relays available")
+        return {"event_id": ""}
     eid = syncer.sync_all()
     if not eid:
-        raise HTTPException(status_code=500, detail="Sync failed")
+        return {"event_id": ""}
     return {"event_id": eid}
 
 
@@ -56,7 +56,7 @@ def restore(
 ):
     syncer = _make_syncer(store, db_path)
     if not syncer:
-        raise HTTPException(status_code=400, detail="nsec not configured or no relays available")
+        return {"found": False}
     data = syncer.fetch_state()
     if data is None:
         return {"found": False}

@@ -13,3 +13,12 @@ pub fn retry_failed(db: State<'_, Database>) -> CountResult {
     let count = db.retry_failed();
     CountResult { count }
 }
+
+#[tauri::command]
+pub fn get_queue_counts(db: State<'_, Database>) -> QueueCounts {
+    QueueCounts {
+        pending: db.count_pending(),
+        failed: db.count_failed(),
+        posted: db.count_posted(),
+    }
+}

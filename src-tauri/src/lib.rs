@@ -67,6 +67,7 @@ pub fn run() {
             commands::relays::disable_relay,
             commands::queue::list_videos,
             commands::queue::retry_failed,
+            commands::queue::get_queue_counts,
             commands::metrics::get_metrics,
             commands::settings::get_settings,
             commands::settings::update_settings,

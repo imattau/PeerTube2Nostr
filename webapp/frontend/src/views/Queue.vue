@@ -1,19 +1,35 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, type Video } from '@/api/client'
 
 const filter = ref('pending')
 const videos = ref<Video[]>([])
 const search = ref('')
 const loading = ref(true)
+const counts = ref<Record<string, number>>({ pending: 0, failed: 0, posted: 0 })
 
-const filters = ['pending', 'failed', 'posted']
+const filters = ['pending', 'failed', 'posted'] as const
+
+const subtitle = computed(() => ({
+  pending: 'Videos waiting to be published',
+  failed: 'Videos that failed to publish',
+  posted: 'Videos published to Nostr',
+}[filter.value] || ''))
+
+let pollInterval: ReturnType<typeof setInterval> | null = null
+
+async function loadCounts() {
+  try {
+    counts.value = await api.getQueueCounts()
+  } catch { }
+}
 
 async function load() {
   loading.value = true
   try {
     const res = await api.listVideos(filter.value, 200)
     videos.value = res.videos
+    await loadCounts()
   } catch { }
   loading.value = false
 }
@@ -26,6 +42,15 @@ const filteredVideos = () => {
 
 function setFilter(f: string) { filter.value = f; load() }
 
+onMounted(() => {
+  load()
+  pollInterval = setInterval(load, 10000)
+})
+
+onUnmounted(() => {
+  if (pollInterval) clearInterval(pollInterval)
+})
+
 function relativeTime(ts: number | null): string {
   if (!ts) return ''
   const diff = Math.floor(Date.now() / 1000) - ts
@@ -35,7 +60,6 @@ function relativeTime(ts: number | null): string {
   return `${Math.floor(diff / 86400)} days ago`
 }
 
-onMounted(load)
 </script>
 
 <template>
@@ -43,7 +67,7 @@ onMounted(load)
     <div class="flex items-center mb-16">
       <div class="flex-col" style="flex:1">
         <div class="heading-1">Queue</div>
-        <div class="body mt-8">Videos waiting to be published</div>
+        <div class="body mt-8">{{ subtitle }}</div>
       </div>
       <button class="button-primary">+ Add source</button>
     </div>
@@ -56,7 +80,7 @@ onMounted(load)
         :class="filter === f ? 'button-primary' : 'button-default'"
         @click="setFilter(f)"
       >
-        {{ f.charAt(0).toUpperCase() + f.slice(1) }} ({{ videos.length }})
+        {{ f.charAt(0).toUpperCase() + f.slice(1) }} ({{ counts[f] }})
       </button>
     </div>
 
