@@ -70,7 +70,7 @@ onMounted(load)
       <div class="action-info">
         <div class="action-title">{{ s.api_channel || s.rss_url || `Source #${s.id}` }}</div>
         <div class="action-subtitle">
-          {{ s.api_base || '' }}{{ s.rss_url ? (s.api_base ? ' · ' : '') + 'RSS: ' + s.rss_url : '' }}
+          {{ s.api_channel_url || s.rss_url || s.api_base || `Source #${s.id}` }}
           <span v-if="s.last_error" class="badge badge-error ml-auto">Error</span>
         </div>
       </div>
