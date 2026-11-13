@@ -96,10 +96,10 @@ function relativeTime(ts: number | null): string {
         </div>
       </div>
       <span class="badge" :class="{
-        'badge-accent': v.status === 'pending',
+        'badge-accent': v.status === 'pending' || v.status === 'publishing',
         'badge-error': v.status === 'failed',
         'badge-success': v.status === 'posted',
-      }">{{ v.status }}</span>
+      }">{{ v.status === 'publishing' ? 'publishing…' : v.status }}</span>
     </div>
 
     <div v-if="!loading && filteredVideos().length === 0" class="empty-state">

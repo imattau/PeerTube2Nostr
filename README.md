@@ -52,6 +52,28 @@ docker compose up --build -d
 ```
 Access the dashboard at `http://localhost:3000`. Check the [Webapp README](./webapp/README.md) for detailed instructions.
 
+### Relay defaults and policy (server admins)
+
+The web dashboard can run with either a server-held nsec or a signer in the
+browser (NIP-07 extension, NIP-46 bunker). Administrators can define the default
+relay list and decide whether users may add their own relays:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PEERTUBE2NOSTR_DEFAULT_RELAYS` | built-in list (`relay.damus.io`, `nos.lol`, …) | Comma/space separated relay URLs seeded as the instance defaults. |
+| `PEERTUBE2NOSTR_RELAY_POLICY` | `open` | `open` lets users add relays and publish anywhere; `locked` restricts publishing to the admin defaults and disables relay management. |
+| `PEERTUBE2NOSTR_API_KEY` | empty (open) | Optional bearer token required by the API. |
+
+Each user also chooses which relays their own posts go to on the **Relays**
+page. That selection is stored in the browser, keyed by Nostr identity, so
+several people can share one dashboard without overwriting each other's
+preferences.
+
+Browser signers (NIP-07 / NIP-46) publish only while the dashboard is open;
+the server runner stands down when one of those signing modes is selected. A
+server-side nsec keeps publishing in the background.
+
+
 ## Installation (CLI)
 
 Python 3.10+ recommended.

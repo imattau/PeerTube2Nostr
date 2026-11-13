@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api, type Settings } from '@/api/client'
 import { storeIdentityHex, storeIdentityNpub } from '@/api/sync-client'
+import { useRelaysStore } from '@/stores/relays'
 import { isPRFSupported, registerPasskeyIdentity, importPasskeyIdentityFromNsec, hasStoredPasskeyIdentity, getStoredPasskeyPubkey, exportPasskeyIdentityAsNsec } from 'nostr-passkey'
 import { nip19, utils } from 'nostr-tools'
 import * as nip46 from '@/api/nip46'
 
+const router = useRouter()
+const relaysStore = useRelaysStore()
 const settings = ref<Settings | null>(null)
 const loading = ref(true)
 const saving = ref(false)
@@ -34,6 +38,17 @@ async function load() {
     settings.value = await api.getSettings()
   } catch { }
   loading.value = false
+}
+
+async function setSigningMethod(method: 'nsec' | 'nip07' | 'nip46') {
+  try {
+    settings.value = await api.updateSettings({ signing_method: method })
+    statusMsg.value = `Signing method set to ${method}`
+  } catch (e: any) { alert(e.message) }
+}
+
+function goRelays() {
+  router.push({ name: 'relays' })
 }
 
 async function saveInterval() {
@@ -77,8 +92,10 @@ async function syncProfile() {
   syncing.value = true
   statusMsg.value = ''
   try {
-    const pubkey = nip07Pubkey.value || undefined
+    const pubkey = nip07Pubkey.value || nip46Pubkey.value || undefined
     const res = await api.importNip65(pubkey)
+    await relaysStore.load(true)
+    if (!relaysStore.isLocked && res.relays?.length) relaysStore.selectUrls(res.relays)
     statusMsg.value = `Imported ${res.imported} relay(s) from NIP-65 profile`
   } catch (e: any) {
     statusMsg.value = `Sync failed: ${e.message}`
@@ -138,6 +155,7 @@ async function connectBunker() {
   try {
     const pubkey = await nip46.connect(bunkerUrl.value)
     storeIdentityNpub(pubkey)
+    await relaysStore.refreshIdentity()
     statusMsg.value = 'Connected to remote signer'
     showBunker.value = false
     syncNip46Status()
@@ -156,6 +174,7 @@ async function disconnectBunker() {
 
 onMounted(async () => {
   await load()
+  await relaysStore.load()
   passkeySupported.value = await isPRFSupported()
   storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
   if (typeof window !== 'undefined' && 'nostr' in window) {
@@ -165,6 +184,7 @@ onMounted(async () => {
       nip07Pubkey.value = await win.nostr.getPublicKey()
       if (nip07Pubkey.value) {
         storeIdentityNpub(nip07Pubkey.value)
+        await relaysStore.refreshIdentity()
       }
     } catch { }
   }
@@ -220,6 +240,54 @@ function npub(hex: string): string {
         </div>
         <div class="action-right">
           <input type="number" v-model.number="settings.max_posts_per_day_per_source" style="width:80px" @change="saveInterval" />
+        </div>
+      </div>
+
+      <div class="action-row">
+        <div class="action-info">
+          <div class="action-title">Publishing relays</div>
+          <div class="action-subtitle">
+            {{ relaysStore.publishRelays.length }} selected
+            <span v-if="relaysStore.isLocked"> · locked to server defaults</span>
+            <span v-else-if="settings?.default_relays?.length"> · {{ settings.default_relays.length }} server default(s) available</span>
+          </div>
+        </div>
+        <div class="action-right">
+          <button class="button-default" @click="goRelays">Manage</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-16">
+      <div class="heading-4 mb-8">Signing</div>
+
+      <div class="action-row">
+        <div class="action-info">
+          <div class="action-title">Signing method</div>
+          <div class="action-subtitle">
+            Browser signers (NIP-07, NIP-46) publish while this dashboard is open.
+            Server nsec publishes in the background.
+          </div>
+        </div>
+        <div class="action-right flex items-center gap-8">
+          <button
+            class="button-default"
+            :class="{ 'button-primary': settings?.signing_method === 'nsec' }"
+            :disabled="!settings?.has_nsec"
+            @click="setSigningMethod('nsec')"
+          >Server nsec</button>
+          <button
+            class="button-default"
+            :class="{ 'button-primary': settings?.signing_method === 'nip07' }"
+            :disabled="!nip07Available"
+            @click="setSigningMethod('nip07')"
+          >NIP-07</button>
+          <button
+            class="button-default"
+            :class="{ 'button-primary': settings?.signing_method === 'nip46' }"
+            :disabled="!nip46Connected"
+            @click="setSigningMethod('nip46')"
+          >NIP-46</button>
         </div>
       </div>
     </div>
@@ -316,7 +384,7 @@ function npub(hex: string): string {
         </div>
       </div>
 
-      <div class="action-row" v-if="settings?.has_nsec">
+      <div class="action-row" v-if="settings && (settings.has_nsec || nip07Pubkey || nip46Pubkey)">
         <div class="action-info">
           <div class="action-title">Synchronise profile</div>
           <div class="action-subtitle">Fetch metadata and NIP-65 relay list from relays</div>

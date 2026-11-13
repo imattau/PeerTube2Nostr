@@ -34,7 +34,11 @@ onMounted(async () => {
       <div class="body">Status: {{ metrics.status }}</div>
       <div class="body">Signing method: {{ metrics.signing_method || 'nsec' }}</div>
       <div class="body">NSEC configured: {{ metrics.has_nsec ? 'Yes' : 'No' }}</div>
+      <div class="body" v-if="settings">Relay policy: {{ settings.relay_policy }} ({{ settings.default_relays.length }} server default(s))</div>
       <div class="body">Next post: {{ metrics.next_post }}</div>
+      <div class="body-small mt-8" v-if="metrics.signing_method && metrics.signing_method !== 'nsec'">
+        Browser signers publish only while this dashboard is open.
+      </div>
     </div>
 
     <div v-if="relays" class="card mb-16">

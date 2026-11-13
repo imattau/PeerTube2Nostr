@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMetricsStore } from '@/stores/metrics'
+import { useRelaysStore } from '@/stores/relays'
 import { api } from '@/api/client'
 import { storeIdentityNpub } from '@/api/sync-client'
 import * as nip46 from '@/api/nip46'
@@ -9,6 +10,7 @@ import * as nip46 from '@/api/nip46'
 const router = useRouter()
 const route = useRoute()
 const metrics = useMetricsStore()
+const relaysStore = useRelaysStore()
 const menuOpen = ref(false)
 const menuProcessing = ref('')
 
@@ -26,7 +28,7 @@ async function menuAction(label: string, fn: () => Promise<any>) {
 const menuItems = [
   { label: 'Check Relays', action: () => api.checkRelays() },
   { label: 'Retry Failed', action: () => api.retryFailed() },
-  { label: 'Sync State', action: () => api.syncState() },
+  { label: 'Sync State', action: () => api.syncState(relaysStore.publishRelays) },
   { label: 'Preferences', action: () => router.push({ name: 'preferences' }) },
 ]
 
@@ -64,14 +66,23 @@ async function tryPublishWithNip07() {
   try {
     const win = window as any
     if (!win.nostr || !win.nostr.signEvent) return
+    const settings = await api.getSettings()
+    if (settings.signing_method !== 'nip07') return
+    const relays = relaysStore.publishRelays
+    if (!relays.length) return
     const next = await api.nextPending()
     if (!next.eligible || !next.video) return
-    const data = await api.getPublishEventData(next.video.id)
+    const data = await api.getPublishEventData(next.video.id, relays)
     if (!data.relays.length) return
     const pubkey = await win.nostr.getPublicKey()
+    if (pubkey) {
+      storeIdentityNpub(pubkey)
+      await relaysStore.refreshIdentity()
+    }
     const event: any = { content: data.content, kind: data.kind, tags: data.tags, created_at: Math.floor(Date.now() / 1000), pubkey }
     const signed = await win.nostr.signEvent(event)
-    await api.publishSigned(next.video.id, signed)
+    await api.publishSigned(next.video.id, signed, relays)
+    await metrics.fetch()
   } catch { }
 }
 
@@ -79,13 +90,18 @@ async function tryPublishWithNip46() {
   try {
     const status = nip46.getStatus()
     if (!status.connected) return
+    const settings = await api.getSettings()
+    if (settings.signing_method !== 'nip46') return
+    const relays = relaysStore.publishRelays
+    if (!relays.length) return
     const next = await api.nextPending()
     if (!next.eligible || !next.video) return
-    const data = await api.getPublishEventData(next.video.id)
+    const data = await api.getPublishEventData(next.video.id, relays)
     if (!data.relays.length) return
     const event = { content: data.content, kind: data.kind, tags: data.tags, created_at: Math.floor(Date.now() / 1000) }
     const signed = await nip46.signEvent(event)
-    await api.publishSigned(next.video.id, signed)
+    await api.publishSigned(next.video.id, signed, relays)
+    await metrics.fetch()
   } catch { }
 }
 
@@ -103,33 +119,57 @@ onMounted(async () => {
     }
   } catch { }
   metrics.startPolling(10000)
+  await relaysStore.load()
+
   // Try to restore state from encrypted Nostr sync on first load
   try {
-    const restored: any = await api.syncRestore()
+    const restored: any = await api.syncRestore(relaysStore.publishRelays)
     if (restored.found) {
       console.log(`Sync state: ${restored.video_count ?? 0} videos, ${restored.source_count ?? 0} sources`)
     }
   } catch { }
 
-  // NIP-07 publishing bridge
   const win = window as any
   nip07Available.value = !!(win.nostr && win.nostr.signEvent)
+
+  let signingMethod = 'nsec'
+  let hasNsec = false
+  try {
+    const settings = await api.getSettings()
+    signingMethod = settings.signing_method || 'nsec'
+    hasNsec = settings.has_nsec
+  } catch { }
+
+  // NIP-07 identity detection. Only switch signing mode automatically when the
+  // user has no server-side key or has already chosen NIP-07, so an extension
+  // cannot hijack an existing nsec configuration.
   if (nip07Available.value) {
     try {
       const pubkey = await win.nostr.getPublicKey()
-      if (pubkey) storeIdentityNpub(pubkey)
+      if (pubkey) {
+        storeIdentityNpub(pubkey)
+        await relaysStore.refreshIdentity()
+      }
     } catch {}
-    try { await api.updateSettings({ signing_method: 'nip07' }) } catch {}
+    if (!hasNsec && signingMethod !== 'nip07') {
+      try { await api.updateSettings({ signing_method: 'nip07' }) } catch {}
+    }
     nip07Interval = setInterval(tryPublishWithNip07, 30000)
     tryPublishWithNip07()
   }
 
-  // NIP-46 publishing bridge
+  // NIP-46 publishing bridge. The interval is always installed; each attempt
+  // checks whether the user selected NIP-46 signing, so connecting a bunker
+  // later (Preferences) starts publishing without a reload.
+  nip46Interval = setInterval(tryPublishWithNip46, 30000)
+
   const nip46Status = nip46.getStatus()
   if (nip46Status.connected && nip46Status.pubkey) {
     storeIdentityNpub(nip46Status.pubkey)
-    try { await api.updateSettings({ signing_method: 'nip46' }) } catch {}
-    nip46Interval = setInterval(tryPublishWithNip46, 30000)
+    await relaysStore.refreshIdentity()
+    if (!hasNsec && signingMethod !== 'nip46') {
+      try { await api.updateSettings({ signing_method: 'nip46' }) } catch {}
+    }
     tryPublishWithNip46()
   }
 })

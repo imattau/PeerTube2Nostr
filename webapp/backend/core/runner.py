@@ -7,7 +7,13 @@ from core.database import Store, get_stored_nsec
 from core.peertube import PeerTubeClient, IngestPipeline
 from core.nostr import NostrPublisher
 from core.sync_state import StateSyncer
-from core.utils import UrlNormaliser, DEFAULT_RELAYS, _sleep_interruptible
+from core.utils import (
+    DEFAULT_RELAYS,
+    RELAY_POLICY_LOCKED,
+    UrlNormaliser,
+    _sleep_interruptible,
+    get_relay_policy,
+)
 
 _RUNTIME_STATUS = ""
 
@@ -275,9 +281,13 @@ class Runner:
             self._log(f"[DRY-RUN] Relays: {relays}")
             return
 
+        if not self.store.claim_pending(int(pending["id"])):
+            self._log(f"Skipping video {pending.get('id')}: already being published")
+            return
+
         try:
             eid = self.pub.publish(nsec=nsec, relays=relays, content=content, kind=kind, tags=tags)
-            self.store.mark_posted(pending["id"], eid)
+            self.store.mark_posted(pending["id"], eid, relays)
             for r in relays:
                 self.store.mark_relay_used(r, None)
                 self._log(f"Published {eid} | {pending.get('title') or pending.get('watch_url')}")
@@ -287,6 +297,10 @@ class Runner:
             for r in relays:
                 self.store.mark_relay_used(r, str(ex))
             self._log(f"Publish failed: {ex}")
+
+    def _client_signer_active(self) -> bool:
+        signing_method = self.store.get_setting("signing_method") or "nsec"
+        return signing_method in ("nip07", "nip46")
 
     def run(
         self,
@@ -303,6 +317,7 @@ class Runner:
         dynamic_relays = relays is None
         last_relays: Optional[list[str]] = None
         last_nsec_set: Optional[bool] = None
+        last_client_signer: Optional[bool] = None
 
         self._log(f"Poll: {poll_seconds}s | Publish spacing: {publish_interval_seconds}s | API limit/source: {api_limit_per_source}")
 
@@ -317,10 +332,21 @@ class Runner:
 
                 self._status("Fetching feeds")
                 if dynamic_relays:
-                    relays = self.store.get_enabled_relays() or DEFAULT_RELAYS
+                    if get_relay_policy() == RELAY_POLICY_LOCKED:
+                        relays = self.store.get_default_relays() or DEFAULT_RELAYS
+                    else:
+                        relays = self.store.get_enabled_relays() or DEFAULT_RELAYS
                 if relays != last_relays:
                     self._log(f"Relays: {', '.join(relays or [])}")
                     last_relays = list(relays or [])
+
+                client_signer = self._client_signer_active()
+                if last_client_signer is None or client_signer != last_client_signer:
+                    if client_signer:
+                        self._log("Publishing delegated to the browser signer (NIP-07/NIP-46).")
+                    else:
+                        self._log("Server-side nsec publishing enabled.")
+                    last_client_signer = client_signer
 
                 if dynamic_nsec:
                     nsec = get_stored_nsec(self.store.db_path)
@@ -328,6 +354,8 @@ class Runner:
                 if last_nsec_set is None or nsec_set != last_nsec_set:
                     if nsec_set:
                         self._log("Nsec available for publishing.")
+                    elif client_signer:
+                        self._log("No nsec set; waiting for the browser signer.")
                     else:
                         self._log("No nsec set; publishing paused.")
                     last_nsec_set = nsec_set
@@ -338,6 +366,9 @@ class Runner:
                         n = self.store.retry_failed(retry_failed_after_seconds)
                         if n:
                             self._log(f"Re-queued failed items for retry: {n}")
+                        stale = self.store.requeue_stale_publishing(300)
+                        if stale:
+                            self._log(f"Released stale publishing claims: {stale}")
                         last_retry_check = now
 
                 self.ingest_sources_once(
@@ -345,7 +376,7 @@ class Runner:
                     lookback_days=new_source_lookback_days,
                 )
 
-                if nsec:
+                if nsec and not client_signer:
                     now_ts = self.n.now_ts()
                     rate = RateLimiter(self.store, now_ts)
                     pending = selector.next_eligible(now_ts)

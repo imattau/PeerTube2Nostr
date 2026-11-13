@@ -10,7 +10,7 @@ try:
 except Exception:
     keyring = None
 
-from core.utils import UrlNormaliser, DEFAULT_RELAYS
+from core.utils import UrlNormaliser, get_admin_default_relays
 
 
 KEYRING_SERVICE = "peertube_nostr"
@@ -164,7 +164,8 @@ class Store:
                 created_ts INTEGER NOT NULL,
                 last_used_ts INTEGER,
                 last_error TEXT,
-                latency_ms INTEGER
+                latency_ms INTEGER,
+                is_default INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -227,6 +228,8 @@ class Store:
         self._add_column("videos", "duration", "INTEGER")
         self._add_column("videos", "width", "INTEGER")
         self._add_column("videos", "height", "INTEGER")
+        self._add_column("videos", "published_relays", "TEXT")
+        self._add_column("relays", "is_default", "INTEGER NOT NULL DEFAULT 0")
 
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_videos_watch_norm ON videos(watch_url_norm);")
@@ -303,18 +306,75 @@ class Store:
         return int(self.get_setting("max_posts_per_day_per_source", "1") or "1")
 
     # Relays
+    def sync_admin_defaults(self) -> None:
+        """Ensure the administrator's default relays exist and are marked.
+
+        Existing user relays are never deleted or disabled. Defaults that are
+        no longer configured simply lose the ``is_default`` marker.
+        """
+        defaults = get_admin_default_relays()
+        ts = self.n.now_ts()
+        norms: list[str] = []
+        for raw in defaults:
+            try:
+                norm = self.n.normalise_relay_url(raw)
+            except Exception:
+                continue
+            if norm in norms:
+                continue
+            norms.append(norm)
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO relays
+                (relay_url, relay_url_norm, enabled, created_ts, is_default)
+                VALUES (?, ?, 1, ?, 1)
+                """,
+                (raw, norm, ts),
+            )
+            self.conn.execute(
+                "UPDATE relays SET is_default=1 WHERE relay_url_norm=? OR relay_url=?",
+                (norm, raw),
+            )
+        if norms:
+            placeholders = ",".join("?" for _ in norms)
+            self.conn.execute(
+                f"UPDATE relays SET is_default=0 WHERE is_default=1 AND relay_url_norm NOT IN ({placeholders})",
+                norms,
+            )
+        else:
+            self.conn.execute("UPDATE relays SET is_default=0 WHERE is_default=1")
+        self.conn.commit()
+
     def seed_default_relays_if_empty(self) -> None:
         cur = self.conn.execute("SELECT COUNT(*) FROM relays")
         if int(cur.fetchone()[0]) > 0:
             return
         ts = self.n.now_ts()
-        for r in DEFAULT_RELAYS:
-            norm = self.n.normalise_relay_url(r)
+        for raw in get_admin_default_relays():
+            try:
+                norm = self.n.normalise_relay_url(raw)
+            except Exception:
+                continue
             self.conn.execute(
-                "INSERT OR IGNORE INTO relays(relay_url, relay_url_norm, enabled, created_ts) VALUES (?, ?, 1, ?)",
-                (r, norm, ts),
+                """
+                INSERT OR IGNORE INTO relays
+                (relay_url, relay_url_norm, enabled, created_ts, is_default)
+                VALUES (?, ?, 1, ?, 1)
+                """,
+                (raw, norm, ts),
             )
         self.conn.commit()
+
+    def get_default_relays(self) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT relay_url, relay_url_norm FROM relays WHERE is_default=1 AND enabled=1 ORDER BY id ASC"
+        ).fetchall()
+        out: list[str] = []
+        for raw, norm in rows:
+            url = norm or raw
+            if url and url not in out:
+                out.append(str(url))
+        return out
 
     def add_relay(self, relay_url: str) -> int:
         return self.add_relay_with_enabled(relay_url, enabled=True)
@@ -384,6 +444,11 @@ class Store:
     def list_relays(self) -> list[tuple]:
         return self.conn.execute(
             "SELECT id, enabled, relay_url, relay_url_norm, last_used_ts, last_error, latency_ms FROM relays ORDER BY id ASC"
+        ).fetchall()
+
+    def list_relays_detailed(self) -> list[tuple]:
+        return self.conn.execute(
+            "SELECT id, enabled, relay_url, relay_url_norm, last_used_ts, last_error, latency_ms, is_default FROM relays ORDER BY is_default DESC, id ASC"
         ).fetchall()
 
     def get_enabled_relays(self) -> list[str]:
@@ -608,7 +673,9 @@ class Store:
         }
 
     def count_pending(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) FROM videos WHERE status='pending'").fetchone()
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM videos WHERE status IN ('pending','publishing')"
+        ).fetchone()
         return int(row[0]) if row else 0
 
     def count_posted(self) -> int:
@@ -647,7 +714,7 @@ class Store:
                    s.api_base, s.api_channel, s.rss_url
             FROM videos v
             JOIN sources s ON s.id = v.source_id
-            WHERE v.status='pending' AND s.enabled=1
+            WHERE v.status IN ('pending','publishing') AND s.enabled=1
             ORDER BY (v.published_ts IS NULL) ASC, v.published_ts ASC, v.first_seen_ts ASC
             LIMIT ?
             """,
@@ -655,27 +722,33 @@ class Store:
         ).fetchall()
 
     def list_videos(self, status: str = 'pending', limit: int = 200) -> list[dict]:
+        if status == 'pending':
+            where = "v.status IN ('pending','publishing')"
+            params: tuple = (limit,)
+        else:
+            where = "v.status=?"
+            params = (status, limit)
         rows = self.conn.execute(
-            """
+            f"""
             SELECT v.id, v.source_id, v.watch_url, v.title, v.summary,
                    v.hls_url, v.direct_url, v.thumbnail_url, v.duration, v.width, v.height,
                    v.peertube_instance, v.channel_name, v.channel_url,
                    v.account_name, v.account_url,
-                   v.status, v.nostr_event_id, v.error,
+                   v.status, v.nostr_event_id, v.error, v.published_relays,
                    v.first_seen_ts, v.last_attempt_ts, v.posted_ts, v.published_ts
             FROM videos v
-            WHERE v.status=?
+            WHERE {where}
             ORDER BY v.first_seen_ts DESC
             LIMIT ?
             """,
-            (status, limit),
+            params,
         ).fetchall()
         keys = [
             "id", "source_id", "watch_url", "title", "summary",
             "hls_url", "direct_url", "thumbnail_url", "duration", "width", "height",
             "peertube_instance", "channel_name", "channel_url",
             "account_name", "account_url",
-            "status", "nostr_event_id", "error",
+            "status", "nostr_event_id", "error", "published_relays",
             "first_seen_ts", "last_attempt_ts", "posted_ts", "published_ts",
         ]
         return [dict(zip(keys, row)) for row in rows]
@@ -857,17 +930,59 @@ class Store:
                 return dict(zip(keys, row))
         return None
 
-    def mark_posted(self, video_row_id: int, event_id: str) -> None:
+    def mark_posted(self, video_row_id: int, event_id: str, relays: Optional[list[str]] = None) -> None:
         ts = self.n.now_ts()
+        published_relays = None
+        if relays is not None:
+            import json
+
+            published_relays = json.dumps(list(relays))
         self.conn.execute(
             """
             UPDATE videos
-            SET status='posted', nostr_event_id=?, posted_ts=?, last_attempt_ts=?, error=NULL
+            SET status='posted', nostr_event_id=?, posted_ts=?, last_attempt_ts=?,
+                error=NULL, published_relays=COALESCE(?, published_relays)
             WHERE id=?
             """,
-            (event_id, ts, ts, video_row_id),
+            (event_id, ts, ts, published_relays, video_row_id),
         )
         self.conn.commit()
+
+    def claim_pending(self, video_row_id: int) -> bool:
+        """Atomically move a video from pending to publishing.
+
+        Returns True only for the caller that won the claim, preventing the
+        server runner and a browser signer from publishing the same video.
+        """
+        ts = self.n.now_ts()
+        cur = self.conn.execute(
+            "UPDATE videos SET status='publishing', last_attempt_ts=? WHERE id=? AND status='pending'",
+            (ts, video_row_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def release_claim(self, video_row_id: int) -> None:
+        cur = self.conn.execute(
+            "UPDATE videos SET status='pending' WHERE id=? AND status='publishing'",
+            (video_row_id,),
+        )
+        self.conn.commit()
+        return None
+
+    def requeue_stale_publishing(self, older_than_seconds: int = 300) -> int:
+        ts = self.n.now_ts()
+        cutoff = ts - older_than_seconds
+        cur = self.conn.execute(
+            """
+            UPDATE videos
+            SET status='pending'
+            WHERE status='publishing' AND (last_attempt_ts IS NULL OR last_attempt_ts <= ?)
+            """,
+            (cutoff,),
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     def mark_failed(self, video_row_id: int, err: str) -> None:
         ts = self.n.now_ts()
@@ -883,7 +998,7 @@ class Store:
             """
             UPDATE videos
             SET status='cancelled', error='cleared by resync', last_attempt_ts=?
-            WHERE source_id=? AND status='pending'
+            WHERE source_id=? AND status IN ('pending','publishing')
             """,
             (ts, source_id),
         )
