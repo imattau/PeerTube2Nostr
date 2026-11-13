@@ -25,7 +25,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          dnf -y install rust cargo nodejs npm webkit2gtk4.1-devel
+          dnf -y install rust cargo nodejs npm webkit2gtk4.1-devel jq
           dnf clean all
 
       - name: Build Flatpak
@@ -35,9 +35,33 @@ jobs:
           manifest-path: build-aux/flatpak/com.peertube2nostr.desktop.json
           cache-key: flatpak-builder-${{ github.sha }}
 
-      - name: Upload Flatpak
-        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
+      - name: Upload Flatpak (tag release)
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: peertube2nostr.flatpak
+
+      - name: Upload Flatpak (manual release)
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          release_id=$(curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+            | jq -r .id)
+          asset_id=$(curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets" \
+            | jq -r '.[] | select(.name == "peertube2nostr.flatpak") | .id' | head -n1)
+          if [ -n "$asset_id" ]; then
+            curl -fsSL -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+          fi
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @peertube2nostr.flatpak \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=peertube2nostr.flatpak"
