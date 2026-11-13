@@ -116,10 +116,10 @@ class DashboardMetrics:
 def _estimate_next_post(store: Store, db_path: str) -> str:
     if store.count_pending() == 0:
         return "none"
+    signing_method = store.get_setting("signing_method") or "nsec"
+    if signing_method in ("nip07", "nip46"):
+        return "pending (frontend signer)"
     if not get_stored_nsec(db_path):
-        signing_method = store.get_setting("signing_method")
-        if signing_method in ("nip07", "nip46"):
-            return "pending (frontend signer)"
         return "nsec missing"
     now_ts = int(time.time())
     selector = PendingSelector(store)

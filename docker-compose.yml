@@ -22,4 +22,8 @@ services:
     environment:
       PEERTUBE2NOSTR_DB_PATH: /data/peertube2nostr.db
       PEERTUBE2NOSTR_API_KEY: ""
+      # Comma separated default relays for everyone on this instance:
+      # PEERTUBE2NOSTR_DEFAULT_RELAYS: "wss://nos.lol,wss://relay.damus.io"
+      # open (default) or locked (only admin defaults may be published to):
+      # PEERTUBE2NOSTR_RELAY_POLICY: "open"
     command: ["uvicorn", "webapp.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

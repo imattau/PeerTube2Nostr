@@ -3,11 +3,13 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import { storeIdentityHex, storeIdentityNpub } from '@/api/sync-client'
+import { useRelaysStore } from '@/stores/relays'
 import { isPRFSupported, registerPasskeyIdentity, importPasskeyIdentityFromNsec, hasStoredPasskeyIdentity, getStoredPasskeyPubkey } from 'nostr-passkey'
-import { nip19, utils } from 'nostr-tools'
+import { getPublicKey, nip19, utils } from 'nostr-tools'
 import * as nip46 from '@/api/nip46'
 
 const router = useRouter()
+const relaysStore = useRelaysStore()
 
 const step = ref(1)
 const identityMethod = ref<'passkey-create' | 'passkey-import' | 'nsec' | 'nip07' | 'nip46' | null>(null)
@@ -40,6 +42,7 @@ const pkOpts = { rpName: 'PeerTube2Nostr', storage: sessionStorage }
 onMounted(async () => {
   passkeySupported.value = await isPRFSupported()
   storedPasskeyPubkey.value = getStoredPasskeyPubkey(pkOpts) || ''
+  await relaysStore.load()
   if (typeof window !== 'undefined' && 'nostr' in window) {
     nip07Available.value = true
     try {
@@ -145,6 +148,21 @@ function pubkeyBech32(hex: string): string {
   }
 }
 
+function identityPubkey(): string {
+  if (identityMethod.value === 'passkey-create' || identityMethod.value === 'passkey-import') {
+    return passkeyPubkey.value
+  }
+  if (identityMethod.value === 'nip07') return nip07Pubkey.value
+  if (identityMethod.value === 'nip46') return nip46.getStatus().pubkey || ''
+  if (identityMethod.value === 'nsec') {
+    try {
+      const decoded = nip19.decode(nsecInput.value)
+      if (decoded.type === 'nsec') return getPublicKey(decoded.data as Uint8Array)
+    } catch { }
+  }
+  return ''
+}
+
 async function finish() {
   loading.value = true
   errorMsg.value = ''
@@ -153,11 +171,27 @@ async function finish() {
     if (nsec) {
       await api.setNsec(nsec)
     }
-    if (relayUrl.value) {
+    if (relayUrl.value && !relaysStore.isLocked) {
       await api.addRelay(relayUrl.value)
+      await relaysStore.load(true)
+      const added = relaysStore.relays.find(
+        r => (r.relay_url_norm || r.relay_url).replace(/\/+$/, '') === relayUrl.value.replace(/\/+$/, ''),
+      )
+      if (added) relaysStore.selectUrls([added.relay_url_norm || added.relay_url])
     }
+    if (importNip65.value && !relaysStore.isLocked) {
+      try {
+        const res = await api.importNip65(identityPubkey() || undefined)
+        await relaysStore.load(true)
+        if (res.relays?.length) relaysStore.selectUrls(res.relays)
+      } catch { }
+    }
+    relaysStore.persist()
     if (channelUrl.value) {
-      await api.addSource(channelUrl.value)
+      const created = await api.addSource(channelUrl.value)
+      if (rssUrl.value && created.id) {
+        try { await api.setSourceRss(created.id, rssUrl.value) } catch { }
+      }
     }
     await api.markSetupComplete()
     router.replace('/overview')
@@ -288,12 +322,44 @@ async function finish() {
       </div>
 
       <div v-if="step === 2">
-        <div class="heading-3 mb-16">Nostr Relay</div>
-        <div class="body mb-16">Add a relay to publish to. You can also import relays from your NIP-65 profile later.</div>
-        <input v-model="relayUrl" placeholder="wss://relay.damus.io" class="w-full" />
-        <div class="flex items-center gap-8 mt-8">
+        <div class="heading-3 mb-16">Nostr Relays</div>
+        <div class="body mb-16">
+          Choose which relays to publish to. Server defaults are pre-selected; you can adjust them later on the Relays page.
+        </div>
+
+        <div v-if="relaysStore.isLocked" class="banner banner-info mb-16">
+          <div class="banner-body">This server uses a locked relay policy: only the administrator's default relays are available.</div>
+        </div>
+
+        <div v-if="relaysStore.relays.length === 0" class="body-small mb-8">
+          No relays configured yet. Add one below.
+        </div>
+
+        <div v-for="r in relaysStore.relays" :key="r.id" class="action-row">
+          <div class="action-info">
+            <label class="action-title" style="cursor:pointer">
+              <input
+                type="checkbox"
+                style="margin-right:8px"
+                :checked="relaysStore.isSelected(r.relay_url_norm || r.relay_url)"
+                @change="relaysStore.toggle(r.relay_url_norm || r.relay_url)"
+              />
+              {{ r.relay_url }}
+            </label>
+          </div>
+          <div class="action-right">
+            <span v-if="r.is_default" class="badge badge-accent">Default</span>
+          </div>
+        </div>
+
+        <div v-if="!relaysStore.isLocked" class="mt-8">
+          <div class="body mb-8">Add a custom relay (optional):</div>
+          <input v-model="relayUrl" placeholder="wss://relay.damus.io" class="w-full" />
+        </div>
+
+        <div v-if="!relaysStore.isLocked" class="flex items-center gap-8 mt-16">
           <input type="checkbox" v-model="importNip65" id="nip65" />
-          <label for="nip65" class="body">Import relays from NIP-65 profile</label>
+          <label for="nip65" class="body">Import relays from my NIP-65 profile and add them to the selection</label>
         </div>
         <div class="flex gap-8 mt-16">
           <button class="button-default" @click="step = 1">Back</button>

@@ -62,7 +62,8 @@ export function isSyncAvailable(): boolean {
   return !!getIdentityHex() || nip07HasNip44()
 }
 
-async function getRelays(): Promise<string[]> {
+async function getRelays(selected?: string[]): Promise<string[]> {
+  if (selected && selected.length) return selected
   try {
     const res = await api.listRelays()
     return res.relays.filter(r => r.enabled).map(r => r.relay_url)
@@ -119,14 +120,14 @@ async function nip07WrapEvent(event: EventTemplate, ownPubkey: string): Promise<
   }
 }
 
-export async function restoreState(): Promise<{
+export async function restoreState(selectedRelays?: string[]): Promise<{
   found: boolean
   version?: number
   ts?: number
   video_count?: number
   source_count?: number
 }> {
-  const relays = await getRelays()
+  const relays = await getRelays(selectedRelays)
   if (!relays.length) return { found: false }
 
   const pubkey = await getOwnPubkey()
@@ -174,8 +175,8 @@ export async function restoreState(): Promise<{
   }
 }
 
-export async function pushState(): Promise<{ event_id: string }> {
-  const relays = await getRelays()
+export async function pushState(selectedRelays?: string[]): Promise<{ event_id: string }> {
+  const relays = await getRelays(selectedRelays)
   if (!relays.length) return { event_id: '' }
 
   const identityBytes = getIdentityBytes()

@@ -18,6 +18,47 @@ DEFAULT_RELAYS = [
 ]
 KEYRING_SERVICE = "peertube_nostr"
 
+RELAY_POLICY_OPEN = "open"
+RELAY_POLICY_LOCKED = "locked"
+RELAY_POLICIES = (RELAY_POLICY_OPEN, RELAY_POLICY_LOCKED)
+
+
+def _split_relay_env(value: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[,\s]+", value or "") if part.strip()]
+
+
+def get_admin_default_relays() -> list[str]:
+    """Relay list configured by the server administrator.
+
+    Reads PEERTUBE2NOSTR_DEFAULT_RELAYS (comma or whitespace separated).
+    Invalid entries are ignored. Falls back to the built-in DEFAULT_RELAYS.
+    """
+    raw = os.environ.get("PEERTUBE2NOSTR_DEFAULT_RELAYS") or ""
+    normaliser = UrlNormaliser()
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in _split_relay_env(raw):
+        try:
+            norm = normaliser.normalise_relay_url(item)
+        except Exception:
+            continue
+        if norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    if out:
+        return out
+    return list(DEFAULT_RELAYS)
+
+
+def get_relay_policy() -> str:
+    """Relay policy configured by the server administrator.
+
+    - open:   users may add relays and publish to any relay (default)
+    - locked: only the admin default relays can be used
+    """
+    policy = (os.environ.get("PEERTUBE2NOSTR_RELAY_POLICY") or "").strip().lower()
+    return policy if policy in RELAY_POLICIES else RELAY_POLICY_OPEN
+
 
 class UrlNormaliser:
     ALLOWED_RELAY_SCHEMES = {"wss", "ws"}

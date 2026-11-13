@@ -5,6 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 
 from core.database import Store
 from core.nostr import NostrPublisher
+from core.relays import (
+    RelaySelectionError,
+    SignedEventError,
+    resolve_publish_relays,
+    verify_signed_event,
+)
 from core.runner import PendingSelector
 from core.sync_state import StateSyncer
 from core.database import get_stored_nsec
@@ -66,59 +72,79 @@ def queue_counts(store: Store = Depends(get_store)):
     }
 
 @router.get("/{video_id}/event-data")
-def get_event_data(video_id: int, store: Store = Depends(get_store)):
+def get_event_data(
+    video_id: int,
+    relays: Optional[list[str]] = Query(default=None),
+    store: Store = Depends(get_store),
+):
     video = store.get_video_by_id(video_id)
     if not video:
         raise HTTPException(404, "Video not found")
-    if video["status"] != "pending":
+    if video["status"] not in ("pending", "publishing"):
         raise HTTPException(400, f"Video status is '{video['status']}', not pending")
     kind, tags = NostrPublisher._build_tags(video)
     content = NostrPublisher._build_content(video)
-    relays = store.get_enabled_relays()
+    try:
+        publish_relays = resolve_publish_relays(store, relays)
+    except RelaySelectionError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
     author = (video.get("channel_name") or video.get("account_name") or "unknown").strip()
-    return {"content": content, "kind": kind, "tags": tags, "relays": relays, "author": author}
+    return {
+        "content": content,
+        "kind": kind,
+        "tags": tags,
+        "relays": publish_relays,
+        "default_relays": store.get_default_relays(),
+        "author": author,
+    }
 
 
 @router.post("/publish-signed")
 def publish_signed(
     video_id: int = Body(...),
     event_json: dict = Body(...),
+    relays: Optional[list[str]] = Body(default=None),
     store: Store = Depends(get_store),
     db_path: str = Depends(get_db_path),
 ):
     video = store.get_video_by_id(video_id)
     if not video:
         raise HTTPException(404, "Video not found")
-    if video["status"] != "pending":
+    if video["status"] not in ("pending", "publishing"):
         raise HTTPException(400, f"Video status is '{video['status']}', not pending")
 
-    from pynostr.event import Event
+    try:
+        ev = verify_signed_event(event_json)
+    except SignedEventError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+
+    try:
+        publish_relays = resolve_publish_relays(store, relays)
+    except RelaySelectionError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+
+    # Claim the row so the server runner (or another tab) cannot publish it too.
+    if not store.claim_pending(video_id):
+        raise HTTPException(status_code=409, detail="Video is already being published")
+
     from pynostr.relay_manager import RelayManager
 
-    ev = Event(
-        kind=event_json.get("kind", 1),
-        pubkey=event_json.get("pubkey", ""),
-        content=event_json.get("content", ""),
-        tags=event_json.get("tags", []),
-        created_at=event_json.get("created_at", 0),
-    )
-    ev.id = event_json.get("id", "")
-    ev.sig = event_json.get("sig", "")
+    try:
+        rm = RelayManager(timeout=15)
+        for r in publish_relays:
+            rm.add_relay(r)
+        rm.publish_event(ev)
+        rm.run_sync()
+        try:
+            rm.close_connections()
+        except Exception:
+            pass
+    except Exception as ex:
+        store.mark_failed(video_id, str(ex))
+        raise HTTPException(status_code=502, detail=f"Relay publish failed: {ex}")
 
-    relays = store.get_enabled_relays()
-    if not relays:
-        raise HTTPException(400, "No relays configured")
-    if not ev.sig or not ev.id:
-        raise HTTPException(400, "Signed event must have id and sig")
-
-    rm = RelayManager(timeout=15)
-    for r in relays:
-        rm.add_relay(r)
-    rm.publish_event(ev)
-    rm.run_sync()
-
-    store.mark_posted(video_id, ev.id)
-    for r in relays:
+    store.mark_posted(video_id, ev.id, publish_relays)
+    for r in publish_relays:
         store.mark_relay_used(r, None)
 
     from routers.sync import make_syncer
@@ -129,7 +155,7 @@ def publish_signed(
         except Exception:
             pass
 
-    return {"ok": True, "event_id": ev.id}
+    return {"ok": True, "event_id": ev.id, "relays": publish_relays}
 
 
 @router.get("/metrics")

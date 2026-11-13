@@ -18,6 +18,12 @@ async function httpCall<T>(method: string, path: string): Promise<T> {
   return request<T>(path, { method })
 }
 
+function relayQuery(relays?: string[]): string {
+  if (!relays || relays.length === 0) return ''
+  const params = relays.map(r => `relays=${encodeURIComponent(r)}`).join('&')
+  return `?${params}`
+}
+
 export interface Source {
   id: number; enabled: boolean
   api_base: string | null; api_channel: string | null
@@ -30,6 +36,11 @@ export interface Relay {
   id: number; enabled: boolean; relay_url: string
   relay_url_norm: string | null; last_used_ts: number | null
   last_error: string | null; latency_ms: number | null
+  is_default?: boolean
+}
+
+export interface RelayList {
+  relays: Relay[]; default_relays: string[]; relay_policy: string
 }
 
 export interface Video {
@@ -53,7 +64,7 @@ export interface Metrics {
 export interface Settings {
   min_publish_interval_seconds: number; max_posts_per_hour: number
   max_posts_per_day_per_source: number; has_nsec: boolean
-  signing_method: string
+  signing_method: string; default_relays: string[]; relay_policy: string
 }
 
 async function tauri<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -97,10 +108,19 @@ export const api = {
     () => Promise.resolve({ cleared: 0, inserted: 0 }),
   )(),
 
+  setSourceRss: (id: number, rssUrl: string) => pick(
+    () => httpCall<{ ok: boolean }>('POST', `/sources/${id}/rss?rss_url=${encodeURIComponent(rssUrl)}`),
+    () => Promise.resolve({ ok: false }),
+  )(),
+
   // Relays
   listRelays: pick(
-    () => httpCall<{ relays: Relay[] }>('GET', '/relays'),
-    () => tauri<Relay[]>('list_relays').then(r => ({ relays: r })),
+    () => httpCall<RelayList>('GET', '/relays'),
+    () => tauri<Relay[]>('list_relays').then(r => ({
+      relays: r,
+      default_relays: r.filter(x => x.enabled).map(x => x.relay_url_norm || x.relay_url),
+      relay_policy: 'open',
+    })),
   ),
 
   addRelay: (url: string) => pick(
@@ -128,8 +148,9 @@ export const api = {
     () => Promise.resolve({ results: [] }),
   ),
   importNip65: (pubkey?: string) => {
-    const httpFn = () => httpCall<{ imported: number }>('POST', `/relays/import-nip65${pubkey ? `?pubkey=${pubkey}` : ''}`)
+    const httpFn = () => httpCall<{ imported: number; relays?: string[] }>('POST', `/relays/import-nip65${pubkey ? `?pubkey=${pubkey}` : ''}`)
     const tauriFn = () => tauriInvoke<{ imported: number }>('import_nip65_relays')
+      .then(r => ({ imported: r.imported, relays: [] as string[] }))
     return (pick(httpFn, tauriFn))()
   },
 
@@ -150,15 +171,18 @@ export const api = {
   )(),
 
   // NIP-07 publishing
-  getPublishEventData: (videoId: number) => pick(
-    () => httpCall<{ content: string; kind: number; tags: string[][]; relays: string[]; author: string }>('GET', `/queue/${videoId}/event-data`),
+  getPublishEventData: (videoId: number, relays?: string[]) => pick(
+    () => httpCall<{ content: string; kind: number; tags: string[][]; relays: string[]; default_relays?: string[]; author: string }>(
+      'GET',
+      `/queue/${videoId}/event-data${relayQuery(relays)}`,
+    ),
     () => Promise.reject(new Error('NIP-07 not supported in Tauri')),
   )(),
 
-  publishSigned: (videoId: number, eventJson: Record<string, any>) => pick(
-    () => request<{ ok: boolean; event_id: string }>('/queue/publish-signed', {
+  publishSigned: (videoId: number, eventJson: Record<string, any>, relays?: string[]) => pick(
+    () => request<{ ok: boolean; event_id: string; relays: string[] }>('/queue/publish-signed', {
       method: 'POST',
-      body: JSON.stringify({ video_id: videoId, event_json: eventJson }),
+      body: JSON.stringify({ video_id: videoId, event_json: eventJson, relays }),
     }),
     () => Promise.reject(new Error('NIP-07 not supported in Tauri')),
   )(),
@@ -218,25 +242,25 @@ export const api = {
   ),
 
   // Sync
-  syncState: async () => {
+  syncState: async (relays?: string[]) => {
     if (!_useTauri && isSyncAvailable()) {
-      return pushState()
+      return pushState(relays)
     }
     return _useTauri
       ? Promise.resolve({ event_id: '' })
-      : httpCall<{ event_id: string }>('POST', '/sync')
+      : httpCall<{ event_id: string }>('POST', `/sync${relayQuery(relays)}`)
   },
   syncStatus: pick(
     () => httpCall<{ available: boolean; pubkey?: string; relay_count?: number }>('GET', '/sync/status'),
     () => Promise.resolve({ available: false }),
   ),
-  syncRestore: async () => {
+  syncRestore: async (relays?: string[]) => {
     if (!_useTauri && isSyncAvailable()) {
-      return restoreState()
+      return restoreState(relays)
     }
     return _useTauri
       ? Promise.resolve({ found: false })
-      : httpCall<{ found: boolean; version?: number; ts?: number; video_count?: number; source_count?: number }>('GET', '/sync/restore')
+      : httpCall<{ found: boolean; version?: number; ts?: number; video_count?: number; source_count?: number }>('GET', `/sync/restore${relayQuery(relays)}`)
   },
 
   // NIP-46

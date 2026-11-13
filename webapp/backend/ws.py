@@ -14,6 +14,11 @@ class LogManager:
         self._connections: Set[WebSocket] = set()
         self._buffer: list[str] = []
         self._max_buffer = 500
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Remember the server event loop so worker threads can broadcast."""
+        self._loop = loop
 
     async def connect(self, ws: WebSocket):
         await ws.accept()
@@ -30,7 +35,18 @@ class LogManager:
         self._buffer.append(entry)
         if len(self._buffer) > self._max_buffer:
             self._buffer = self._buffer[-self._max_buffer:]
-        asyncio.ensure_future(self._broadcast(entry))
+        try:
+            asyncio.get_running_loop().create_task(self._broadcast(entry))
+            return
+        except RuntimeError:
+            pass
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self._broadcast(entry), loop)
+        except RuntimeError:
+            pass
 
     async def _broadcast(self, entry: str):
         stale = set()

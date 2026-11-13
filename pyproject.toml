@@ -39,6 +39,3 @@ packages = [
 
 [tool.setuptools.package-data]
 "desktop" = ["styles/**", "styles/icons/**"]
-
-[tool.setuptools.package-data]
-"desktop" = ["styles/**", "styles/icons/**"]

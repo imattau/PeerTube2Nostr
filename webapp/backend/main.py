@@ -6,6 +6,7 @@ _backend_dir = os.path.join(_project_root, 'webapp', 'backend')
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
+import asyncio
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -26,6 +27,8 @@ _runner_thread: threading.Thread | None = None
 async def lifespan(app: FastAPI):
     global _stop_event, _runner_thread
 
+    log_manager.set_loop(asyncio.get_running_loop())
+
     api_key = get_api_key()
     if api_key:
         log_manager.log("API key authentication enabled", "INFO")
@@ -36,14 +39,18 @@ async def lifespan(app: FastAPI):
     from core.peertube import PeerTubeClient
     from core.nostr import NostrPublisher
     from core.runner import Runner, _set_runtime_status
-    from core.utils import UrlNormaliser
+    from core.utils import UrlNormaliser, get_admin_default_relays, get_relay_policy
 
     db_path = get_db_path()
     try:
         store = Store(db_path, UrlNormaliser())
         store.init_schema()
-        store.seed_default_relays_if_empty()
+        store.sync_admin_defaults()
         log_manager.log(f"Database: {db_path}", "INFO")
+        log_manager.log(
+            f"Relay policy: {get_relay_policy()} | Admin defaults: {', '.join(get_admin_default_relays())}",
+            "INFO",
+        )
         log_manager.log(f"Sources: {store.count_sources()} | Relays: {store.count_relays()} | Pending: {store.count_pending()} | Posted: {store.count_posted()} | Failed: {store.count_failed()}", "INFO")
         store.close()
     except Exception as e:

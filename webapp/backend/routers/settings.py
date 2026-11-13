@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Body
 
 from core.database import Store, get_stored_nsec, set_stored_nsec, clear_stored_nsec
+from core.utils import get_relay_policy
 from auth import verify_api_key
 from dependencies import get_store, get_db_path
 
@@ -23,6 +24,8 @@ def get_settings(
         "max_posts_per_day_per_source": max_per_day_per_source,
         "has_nsec": bool(get_stored_nsec(db_path)),
         "signing_method": signing_method,
+        "default_relays": store.get_default_relays(),
+        "relay_policy": get_relay_policy(),
     }
 
 
@@ -33,6 +36,7 @@ def update_settings(
     max_posts_per_day_per_source: Optional[int] = None,
     signing_method: Optional[str] = None,
     store: Store = Depends(get_store),
+    db_path: str = Depends(get_db_path),
 ):
     if min_publish_interval_seconds is not None:
         store.set_setting("min_publish_interval_seconds", str(min_publish_interval_seconds))
@@ -52,6 +56,9 @@ def update_settings(
         "max_posts_per_hour": max_per_hour,
         "max_posts_per_day_per_source": max_per_day,
         "signing_method": signing,
+        "has_nsec": bool(get_stored_nsec(db_path)),
+        "default_relays": store.get_default_relays(),
+        "relay_policy": get_relay_policy(),
     }
 
 
@@ -66,11 +73,15 @@ def get_nsec_status(
 @router.put("/nsec")
 def set_nsec(
     nsec: str = Body(..., embed=True),
+    store: Store = Depends(get_store),
     db_path: str = Depends(get_db_path),
 ):
     if not nsec:
         raise HTTPException(status_code=400, detail="NSEC cannot be empty")
     store_type, path = set_stored_nsec(db_path, nsec)
+    # A server-side key makes server-side publishing the active mode unless the
+    # user later switches to a browser signer.
+    store.set_setting("signing_method", "nsec")
     return {"stored_in": store_type, "path": path}
 
 
