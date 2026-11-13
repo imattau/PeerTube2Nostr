@@ -21,3 +21,6 @@ webapp/frontend/dist/
 .idea/
 .vscode/
 *.swp
+
+# Flatpak builder
+.flatpak-builder/
