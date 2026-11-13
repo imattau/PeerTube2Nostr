@@ -1,3 +1,10 @@
+peertube2nostr (0.2.1) unstable; urgency=low
+
+  * Fix Flatpak launch crash when libayatana-appindicator is unavailable
+  * Skip tray icon gracefully instead of panicking
+
+ -- Matt Thomson <peertube2nostr@users.noreply.github.com>  Sat, 14 Nov 2026 00:00:00 +0000
+
 peertube2nostr (0.2.0) unstable; urgency=low
 
   * User-selectable publishing relays with per-identity persistence

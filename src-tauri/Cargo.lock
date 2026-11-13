@@ -2910,12 +2910,13 @@ dependencies = [
 
 [[package]]
 name = "peertube2nostr"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "directories",
  "env_logger",
  "keyring",
+ "libloading",
  "log",
  "nostr-sdk",
  "rand 0.8.6",
