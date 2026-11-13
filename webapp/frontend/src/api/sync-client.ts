@@ -1,6 +1,7 @@
 import { SimplePool, nip59, nip44, type NostrEvent, type EventTemplate } from 'nostr-tools'
 import { getPublicKey, generateSecretKey, finalizeEvent, utils } from 'nostr-tools'
 import { api } from './client'
+import { isTauri } from './adapter'
 
 const STORAGE_KEY_HEX = 'pt2n:identity_hex'
 const STORAGE_KEY_NPUB = 'pt2n:identity_npub'
@@ -14,10 +15,6 @@ function nip07(): any {
 function nip07HasNip44(): boolean {
   const n = nip07()
   return !!(n && n.nip44 && typeof n.nip44.encrypt === 'function' && typeof n.nip44.decrypt === 'function')
-}
-
-function isTauri(): boolean {
-  return typeof window !== 'undefined' && !!window.__TAURI__
 }
 
 export function storeIdentityHex(hex: string) {

@@ -1,3 +1,11 @@
+peertube2nostr (0.2.3) unstable; urgency=low
+
+  * Fix Flatpak launch "Could not connect to localhost" by enabling custom-protocol feature
+  * Enable withGlobalTauri and update frontend Tauri v2 IPC/setup detection
+  * Skip WebSocket log stream in Tauri desktop mode and fall back to file if keyring is unavailable
+
+ -- Matt Thomson <peertube2nostr@users.noreply.github.com>  Sat, 14 Nov 2026 08:05:00 +1100
+
 peertube2nostr (0.2.2) unstable; urgency=low
 
   * Add PeerTube2Nostr app and desktop icon across all distribution bundles

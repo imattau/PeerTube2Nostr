@@ -12,14 +12,15 @@ fn keyring_user(db_path: &str) -> String {
 
 pub fn store_nsec(db_path: &str, nsec: &str) -> Result<String, String> {
     let user = keyring_user(db_path);
-    let entry = Entry::new(KEYRING_SERVICE, &user).map_err(|e| format!("Failed to create keyring entry: {}", e))?;
-    entry
-        .set_password(nsec)
-        .map_err(|e| format!("Failed to store nsec in keyring: {}", e))?;
+    let stored_in_keyring = Entry::new(KEYRING_SERVICE, &user)
+        .and_then(|entry| entry.set_password(nsec))
+        .is_ok();
 
     let secret_path = format!("{}.nsec", db_path);
     if let Err(e) = std::fs::write(&secret_path, nsec.trim()) {
-        return Err(format!("Failed to write fallback nsec file: {}", e));
+        if !stored_in_keyring {
+            return Err(format!("Failed to write fallback nsec file: {}", e));
+        }
     }
     #[cfg(unix)]
     {
@@ -30,7 +31,7 @@ pub fn store_nsec(db_path: &str, nsec: &str) -> Result<String, String> {
             let _ = std::fs::set_permissions(&secret_path, perms);
         }
     }
-    Ok("keyring".into())
+    Ok(if stored_in_keyring { "keyring" } else { "file" }.into())
 }
 
 pub fn get_nsec(db_path: &str) -> Option<String> {

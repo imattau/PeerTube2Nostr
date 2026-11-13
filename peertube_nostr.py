@@ -25,7 +25,7 @@ if _project_root not in sys.path:
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 import argparse
 import calendar

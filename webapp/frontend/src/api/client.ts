@@ -214,6 +214,9 @@ export const api = {
     return pick(
       () => httpCall<Settings>('PUT', `/settings?${params}`),
       () => tauri<Settings>('update_settings', {
+        minPublishIntervalSeconds: data.min_publish_interval_seconds ?? null,
+        maxPostsPerHour: data.max_posts_per_hour ?? null,
+        maxPostsPerDayPerSource: data.max_posts_per_day_per_source ?? null,
         min_publish_interval_seconds: data.min_publish_interval_seconds ?? null,
         max_posts_per_hour: data.max_posts_per_hour ?? null,
         max_posts_per_day_per_source: data.max_posts_per_day_per_source ?? null,
@@ -228,17 +231,36 @@ export const api = {
 
   deleteNsec: () => pick(
     () => httpCall<{ removed: boolean }>('DELETE', '/settings/nsec'),
-    () => tauriInvoke<{ configured: boolean }>('delete_nsec').then(r => ({ removed: !r.configured })),
+    () => tauriInvoke<{ configured: boolean }>('delete_nsec').then(r => {
+      try { localStorage.removeItem('pt2n:setup_complete') } catch {}
+      return { removed: !r.configured }
+    }),
   )(),
 
   // Setup
   setupStatus: pick(
     () => httpCall<{ complete: boolean; relays: number; sources: number; needs_onboarding: boolean }>('GET', '/setup/status'),
-    () => Promise.resolve({ complete: false, relays: 0, sources: 0, needs_onboarding: true }),
+    async () => {
+      const m = await tauri<Metrics>('get_metrics')
+      let localDone = false
+      try {
+        localDone = localStorage.getItem('pt2n:setup_complete') === '1'
+      } catch {}
+      const complete = localDone || m.has_nsec || m.sources > 0
+      return {
+        complete,
+        relays: m.relays,
+        sources: m.sources,
+        needs_onboarding: !complete,
+      }
+    },
   ),
   markSetupComplete: pick(
     () => httpCall<{ ok: boolean }>('POST', '/setup/complete'),
-    () => Promise.resolve({ ok: true }),
+    () => {
+      try { localStorage.setItem('pt2n:setup_complete', '1') } catch {}
+      return Promise.resolve({ ok: true })
+    },
   ),
 
   // Sync

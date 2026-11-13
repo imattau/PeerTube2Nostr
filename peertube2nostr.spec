@@ -1,5 +1,5 @@
 Name:           peertube2nostr
-Version:        0.2.2
+Version:        0.2.3
 Release:        1%{?dist}
 Summary:        PeerTube to Nostr publisher - GNOME desktop application
 
@@ -79,6 +79,10 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/peertube2nostr.deskto
 %{_datadir}/icons/hicolor/*/apps/peertube2nostr.*
 
 %changelog
+* Sat Nov 14 2026 Matt Thomson <peertube2nostr@users.noreply.github.com> - 0.2.3-1
+- Enable custom-protocol in Flatpak build to embed frontend assets
+- Fix Tauri v2 IPC detection, setup status, and keyring fallback
+
 * Sat Nov 14 2026 Matt Thomson <peertube2nostr@users.noreply.github.com> - 0.2.2-1
 - Add custom PeerTube2Nostr application icon across all distribution bundles
 - Fix desktop entry categories and window icon configuration

@@ -4,16 +4,18 @@ interface TauriCore {
 
 declare global {
   interface Window {
+    isTauri?: boolean
     __TAURI__?: { core: TauriCore }
+    __TAURI_INTERNALS__?: TauriCore
   }
 }
 
 export function isTauri(): boolean {
-  return typeof window !== 'undefined' && !!window.__TAURI__
+  return typeof window !== 'undefined' && Boolean(window.isTauri || window.__TAURI__ || window.__TAURI_INTERNALS__)
 }
 
 export function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const core = window.__TAURI__?.core
-  if (!core) throw new Error('Not running in Tauri')
-  return core.invoke(cmd, args) as Promise<T>
+  const invoke = window.__TAURI__?.core?.invoke ?? window.__TAURI_INTERNALS__?.invoke
+  if (!invoke) throw new Error('Not running in Tauri')
+  return invoke(cmd, args) as Promise<T>
 }

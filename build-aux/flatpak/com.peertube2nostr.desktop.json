@@ -36,7 +36,7 @@
       "build-commands": [
         "mkdir -p /run/build/peertube2nostr/npm-cache && npm ci --no-audit --no-fund --prefix webapp/frontend",
         "npm run build --prefix webapp/frontend",
-        "cargo build --manifest-path src-tauri/Cargo.toml --release",
+        "cargo build --manifest-path src-tauri/Cargo.toml --release --features custom-protocol",
         "install -Dm755 src-tauri/target/release/peertube2nostr /app/bin/peertube2nostr",
         "install -Dm644 build-aux/flatpak/com.peertube2nostr.desktop.desktop /app/share/applications/com.peertube2nostr.desktop.desktop",
         "install -Dm644 build-aux/flatpak/com.peertube2nostr.desktop.metainfo.xml /app/share/metainfo/com.peertube2nostr.desktop.metainfo.xml",

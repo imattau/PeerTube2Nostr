@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { isTauri } from '@/api/adapter'
 
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/ws/logs`
 
@@ -16,7 +17,7 @@ export const useLogStore = defineStore('logs', () => {
   const maxEntries = 500
 
   function connect() {
-    if (ws) return
+    if (isTauri() || ws) return
     try {
       ws = new WebSocket(WS_URL)
       ws.onopen = () => { connected.value = true }
