@@ -1,3 +1,12 @@
+peertube2nostr (0.2.2) unstable; urgency=low
+
+  * Add PeerTube2Nostr app and desktop icon across all distribution bundles
+  * Fix Flatpak/Desktop Entry categories, StartupWMClass, and hicolor icon sizes
+  * Add webapp favicon.svg, PNG icons, and manifest.json
+  * Suppress AT-SPI and WebKit a11y bus connection warnings in Flatpak
+
+ -- Matt Thomson <peertube2nostr@users.noreply.github.com>  Sat, 14 Nov 2026 07:15:00 +1100
+
 peertube2nostr (0.2.1) unstable; urgency=low
 
   * Fix Flatpak launch crash when libayatana-appindicator is unavailable

@@ -6,5 +6,6 @@ Comment=Publish PeerTube channel videos to Nostr
 Exec=/usr/share/venvs/peertube2nostr/bin/peertube2nostr-desktop
 Icon=peertube2nostr
 Terminal=false
-Categories=Network;Video;AudioVideo;
+Categories=AudioVideo;Video;Network;
 Keywords=peertube;nostr;video;publish;
+StartupWMClass=peertube2nostr-desktop

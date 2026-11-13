@@ -1,5 +1,5 @@
 Name:           peertube2nostr
-Version:        0.1.5
+Version:        0.2.2
 Release:        1%{?dist}
 Summary:        PeerTube to Nostr publisher - GNOME desktop application
 
@@ -52,13 +52,19 @@ mkdir -p %{buildroot}%{_datadir}/icons/hicolor/48x48/apps
 mkdir -p %{buildroot}%{_datadir}/icons/hicolor/64x64/apps
 mkdir -p %{buildroot}%{_datadir}/icons/hicolor/96x96/apps
 mkdir -p %{buildroot}%{_datadir}/icons/hicolor/128x128/apps
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/256x256/apps
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/512x512/apps
+mkdir -p %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
 
 install -m 0644 debian/peertube2nostr.desktop %{buildroot}%{_datadir}/applications/
-install -m 0644 desktop/styles/icons/app_icon_32.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/peertube2nostr.png
-install -m 0644 desktop/styles/icons/app_icon_48.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/peertube2nostr.png
-install -m 0644 desktop/styles/icons/app_icon_64.png %{buildroot}%{_datadir}/icons/hicolor/64x64/apps/peertube2nostr.png
-install -m 0644 desktop/styles/icons/app_icon_96.png %{buildroot}%{_datadir}/icons/hicolor/96x96/apps/peertube2nostr.png
-install -m 0644 desktop/styles/icons/app_icon_128.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/32x32/apps/peertube2nostr.png %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/48x48/apps/peertube2nostr.png %{buildroot}%{_datadir}/icons/hicolor/48x48/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/64x64/apps/peertube2nostr.png %{buildroot}%{_datadir}/icons/hicolor/64x64/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/96x96/apps/peertube2nostr.png %{buildroot}%{_datadir}/icons/hicolor/96x96/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/128x128/apps/peertube2nostr.png %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/256x256/apps/peertube2nostr.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/512x512/apps/peertube2nostr.png %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/peertube2nostr.png
+install -m 0644 debian/icons/hicolor/scalable/apps/peertube2nostr.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/peertube2nostr.svg
 
 desktop-file-validate %{buildroot}%{_datadir}/applications/peertube2nostr.desktop
 
@@ -70,9 +76,13 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/peertube2nostr.deskto
 %{python3_sitelib}/%{name}-%{version}.dist-info/
 %{_bindir}/%{name}-desktop
 %{_datadir}/applications/peertube2nostr.desktop
-%{_datadir}/icons/hicolor/*/apps/peertube2nostr.png
+%{_datadir}/icons/hicolor/*/apps/peertube2nostr.*
 
 %changelog
+* Sat Nov 14 2026 Matt Thomson <peertube2nostr@users.noreply.github.com> - 0.2.2-1
+- Add custom PeerTube2Nostr application icon across all distribution bundles
+- Fix desktop entry categories and window icon configuration
+
 * Wed Jul 01 2026 Matt Thomson <peertube2nostr@users.noreply.github.com> - 0.1.0-1
 - Add system tray icon for minimize-to-background on GNOME
 

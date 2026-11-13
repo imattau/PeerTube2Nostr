@@ -36,9 +36,11 @@ class MainWindow(Gtk.ApplicationWindow):
         icon_dir = os.path.join(
             os.path.dirname(__file__), 'styles', 'icons'
         )
-        icon_path = os.path.join(icon_dir, 'app_icon_48.png')
-        if os.path.exists(icon_path):
-            self.set_icon_from_file(icon_path)
+        for icon_name in ('app_icon_128.png', 'app_icon_48.png'):
+            icon_path = os.path.join(icon_dir, icon_name)
+            if os.path.exists(icon_path):
+                self.set_icon_from_file(icon_path)
+                break
 
         self._nav_buttons: list[Gtk.EventBox] = []
         self._nav_badges: dict[str, Gtk.Label] = {}

@@ -31,6 +31,16 @@ class PeerTube2NostrApp(Gtk.Application):
     def do_startup(self):
         Gtk.Application.do_startup(self)
 
+        icon_dir = os.path.join(os.path.dirname(__file__), 'styles', 'icons')
+        for icon_name in ('app_icon.svg', 'app_icon_128.png'):
+            icon_path = os.path.join(icon_dir, icon_name)
+            if os.path.exists(icon_path):
+                try:
+                    Gtk.Window.set_default_icon_from_file(icon_path)
+                    break
+                except GLib.Error:
+                    continue
+
         css_path = os.path.join(
             os.path.dirname(__file__), 'styles', 'adwaita.css'
         )

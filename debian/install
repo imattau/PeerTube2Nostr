@@ -4,3 +4,6 @@ debian/icons/hicolor/48x48/apps/peertube2nostr.png /usr/share/icons/hicolor/48x4
 debian/icons/hicolor/64x64/apps/peertube2nostr.png /usr/share/icons/hicolor/64x64/apps/
 debian/icons/hicolor/96x96/apps/peertube2nostr.png /usr/share/icons/hicolor/96x96/apps/
 debian/icons/hicolor/128x128/apps/peertube2nostr.png /usr/share/icons/hicolor/128x128/apps/
+debian/icons/hicolor/256x256/apps/peertube2nostr.png /usr/share/icons/hicolor/256x256/apps/
+debian/icons/hicolor/512x512/apps/peertube2nostr.png /usr/share/icons/hicolor/512x512/apps/
+debian/icons/hicolor/scalable/apps/peertube2nostr.svg /usr/share/icons/hicolor/scalable/apps/

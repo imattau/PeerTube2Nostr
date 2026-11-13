@@ -14,7 +14,9 @@
     "--socket=wayland",
     "--share=ipc",
     "--device=dri",
-    "--filesystem=home"
+    "--filesystem=home",
+    "--env=NO_AT_BRIDGE=1",
+    "--env=WEBKIT_A11Y_BUS_ADDRESS="
   ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin",
@@ -38,9 +40,13 @@
         "install -Dm755 src-tauri/target/release/peertube2nostr /app/bin/peertube2nostr",
         "install -Dm644 build-aux/flatpak/com.peertube2nostr.desktop.desktop /app/share/applications/com.peertube2nostr.desktop.desktop",
         "install -Dm644 build-aux/flatpak/com.peertube2nostr.desktop.metainfo.xml /app/share/metainfo/com.peertube2nostr.desktop.metainfo.xml",
-        "install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.peertube2nostr.desktop.png",
         "install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/com.peertube2nostr.desktop.png",
-        "install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/64x64/apps/com.peertube2nostr.desktop.png"
+        "install -Dm644 src-tauri/icons/48x48.png /app/share/icons/hicolor/48x48/apps/com.peertube2nostr.desktop.png",
+        "install -Dm644 src-tauri/icons/64x64.png /app/share/icons/hicolor/64x64/apps/com.peertube2nostr.desktop.png",
+        "install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.peertube2nostr.desktop.png",
+        "install -Dm644 src-tauri/icons/256x256.png /app/share/icons/hicolor/256x256/apps/com.peertube2nostr.desktop.png",
+        "install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/com.peertube2nostr.desktop.png",
+        "install -Dm644 src-tauri/icons/icon.svg /app/share/icons/hicolor/scalable/apps/com.peertube2nostr.desktop.svg"
       ],
       "sources": [
         {

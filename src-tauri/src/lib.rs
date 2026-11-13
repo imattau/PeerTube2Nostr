@@ -14,6 +14,13 @@ pub fn run() {
             let db = Database::new().expect("Failed to initialise database");
             app.manage(db);
 
+            if let (Some(window), Some(icon)) = (
+                app.get_webview_window("main"),
+                app.default_window_icon(),
+            ) {
+                let _ = window.set_icon(icon.clone());
+            }
+
             #[cfg(feature = "tray-icon")]
             {
                 use tauri::menu::{Menu, MenuItem};
