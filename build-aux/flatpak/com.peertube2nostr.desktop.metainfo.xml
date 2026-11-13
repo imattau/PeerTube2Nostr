@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>com.peertube2nostr.desktop</id>
-  <metadata_license>LGPL-2.1-only</metadata_license>
+  <metadata_license>CC0-1.0</metadata_license>
   <project_license>LGPL-2.1-only</project_license>
   <name>PeerTube2Nostr</name>
   <summary>Publish PeerTube channel videos to Nostr</summary>
@@ -18,11 +18,10 @@
   </categories>
   <url type="homepage">https://github.com/imattau/PeerTube2Nostr</url>
   <url type="bugtracker">https://github.com/imattau/PeerTube2Nostr/issues</url>
-  <screenshots>
-    <screenshot type="default">
-      <caption>Dashboard overview</caption>
-    </screenshot>
-  </screenshots>
+  <launchable type="desktop-id">com.peertube2nostr.desktop.desktop</launchable>
+  <developer id="com.peertube2nostr">
+    <name>PeerTube2Nostr contributors</name>
+  </developer>
   <releases>
     <release version="0.2.0" date="2026-11-13"/>
     <release version="0.1.4" date="2026-07-05"/>

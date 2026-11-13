@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing tag/release to upload the Flatpak to (optional)'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -21,7 +26,6 @@ jobs:
       - name: Install dependencies
         run: |
           dnf -y install rust cargo nodejs npm webkit2gtk4.1-devel
-          npm ci --prefix webapp/frontend
           dnf clean all
 
       - name: Build Flatpak
@@ -32,7 +36,8 @@ jobs:
           cache-key: flatpak-builder-${{ github.sha }}
 
       - name: Upload Flatpak
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: peertube2nostr.flatpak
