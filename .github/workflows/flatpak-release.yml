@@ -26,7 +26,6 @@ jobs:
       - name: Install dependencies
         run: |
           dnf -y install rust cargo nodejs npm webkit2gtk4.1-devel
-          npm ci --prefix webapp/frontend
           dnf clean all
 
       - name: Build Flatpak
