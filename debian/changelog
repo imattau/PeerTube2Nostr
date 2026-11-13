@@ -1,3 +1,12 @@
+peertube2nostr (0.2.0) unstable; urgency=low
+
+  * User-selectable publishing relays with per-identity persistence
+  * Admin-configurable default relays and open/locked relay policy
+  * Client-signed event verification, atomic publish claims
+  * Browser signer (NIP-07/NIP-46) publishing bridge improvements
+
+ -- Matt Thomson <peertube2nostr@users.noreply.github.com>  Fri, 13 Nov 2026 00:00:00 +0000
+
 peertube2nostr (0.1.5) unstable; urgency=low
 
   * Core module extraction, FastAPI backend, Vue 3 frontend, Tauri desktop

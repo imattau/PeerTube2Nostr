@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="PeerTube2Nostr API",
     description="REST API for PeerTube2Nostr publisher",
-    version="0.1.7",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -132,7 +132,7 @@ app.include_router(ws_router)
 def root():
     return {
         "name": "PeerTube2Nostr API",
-        "version": "0.1.6",
+        "version": "0.2.0",
         "docs": "/docs",
         "openapi": "/openapi.json",
     }
